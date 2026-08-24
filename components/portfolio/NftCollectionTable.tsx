@@ -4,6 +4,7 @@ import NftImage from 'components/nfts/NftImage';
 import ChainLogo from 'components/ui/ChainLogo';
 import EmptyState from 'components/ui/EmptyState';
 import TablePagination from 'components/ui/TablePagination';
+import { formatShare } from 'lib/format';
 import { useCurrency } from 'lib/hooks/useCurrency';
 import { usePagination } from 'lib/hooks/usePagination';
 import type { AggregatedNftCollection } from 'lib/portfolio/aggregate';
@@ -31,13 +32,14 @@ const NftCollectionTable = ({ collections, totalValueUsd }: Props) => {
   return (
     <>
       <div className="overflow-x-auto">
-        <table className="w-full min-w-[520px]">
+        <table className="w-full min-w-[580px]">
           <thead>
             <tr className="text-[11px] uppercase tracking-wide text-zinc-400 border-b border-zinc-200 dark:border-zinc-800">
               <th className="text-left font-medium py-2 pl-4 pr-2">Collection</th>
               <th className="text-right font-medium py-2 px-2 hidden sm:table-cell">Floor</th>
               <th className="text-right font-medium py-2 px-2">Items</th>
-              <th className="text-right font-medium py-2 px-2 pr-4">Value</th>
+              <th className="text-right font-medium py-2 px-2">Value</th>
+              <th className="text-right font-medium py-2 px-2 pr-4">Share</th>
             </tr>
           </thead>
           <tbody>
@@ -64,9 +66,12 @@ const NftCollectionTable = ({ collections, totalValueUsd }: Props) => {
 
                   <td className="py-2.5 px-2 text-right text-sm tabular">{collection.itemCount}</td>
 
-                  <td className="py-2.5 px-2 pr-4 text-right">
-                    <div className="text-sm font-medium tabular">{formatValue(collection.valueUsd)}</div>
-                    {share >= 0.1 ? <div className="text-[11px] text-zinc-400 tabular">{share.toFixed(1)}%</div> : null}
+                  <td className="py-2.5 px-2 text-right text-sm font-medium tabular">
+                    {formatValue(collection.valueUsd)}
+                  </td>
+
+                  <td className="py-2.5 px-2 pr-4 text-right text-sm tabular text-zinc-500 dark:text-zinc-400">
+                    {formatShare(share)}
                   </td>
                 </tr>
               );

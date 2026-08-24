@@ -24,13 +24,14 @@ const TokenTable = ({ tokens, totalValueUsd, emptyTitle, emptyDescription }: Pro
   return (
     <>
       <div className="overflow-x-auto">
-        <table className="w-full min-w-[520px]">
+        <table className="w-full min-w-[580px]">
           <thead>
             <tr className="text-[11px] uppercase tracking-wide text-zinc-400 border-b border-zinc-200 dark:border-zinc-800">
               <th className="text-left font-medium py-2 pl-4 pr-2">Asset</th>
               <th className="text-right font-medium py-2 px-2 hidden sm:table-cell">Price</th>
               <th className="text-right font-medium py-2 px-2">Amount</th>
               <th className="text-right font-medium py-2 px-2">Value</th>
+              <th className="text-right font-medium py-2 px-2">Share</th>
               <th className="w-8" />
             </tr>
           </thead>

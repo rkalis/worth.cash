@@ -462,7 +462,10 @@ describe('aggregateTokens spam and price resolution across a merged row', () => 
   it('does not mark a row spam when only one of its deployments is flagged', () => {
     const [position] = aggregateTokens(
       buildInput({
-        balances: [buildBalance(1, yfiEthereum, '1000000000000000000'), buildBalance(43114, yfiAvalanche, '1000000000000000')],
+        balances: [
+          buildBalance(1, yfiEthereum, '1000000000000000000'),
+          buildBalance(43114, yfiAvalanche, '1000000000000000'),
+        ],
         tokens: [
           buildToken(1, yfiEthereum, { symbol: 'YFI', decimals: 18, coingeckoId: 'yearn-finance' }),
           // The Avalanche deployment tripped the URL heuristic on 'yearn.finance'.
@@ -528,7 +531,10 @@ describe('aggregateTokens spam and price resolution across a merged row', () => 
   it('prices a row from the largest holding when only pool prices exist', () => {
     const [position] = aggregateTokens(
       buildInput({
-        balances: [buildBalance(1, yfiEthereum, '1000000000000000000'), buildBalance(43114, yfiAvalanche, '9000000000000000000')],
+        balances: [
+          buildBalance(1, yfiEthereum, '1000000000000000000'),
+          buildBalance(43114, yfiAvalanche, '9000000000000000000'),
+        ],
         tokens: [
           buildToken(1, yfiEthereum, { symbol: 'TKN', decimals: 18, coingeckoId: 'some-coin' }),
           buildToken(43114, yfiAvalanche, { symbol: 'TKN', decimals: 18, coingeckoId: 'some-coin' }),

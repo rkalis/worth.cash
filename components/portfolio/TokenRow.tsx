@@ -4,7 +4,7 @@ import Badge from 'components/ui/Badge';
 import ChainLogo from 'components/ui/ChainLogo';
 import ExchangeLogo from 'components/ui/ExchangeLogo';
 import TokenLogo from 'components/ui/TokenLogo';
-import { formatAmount, shortenAddress } from 'lib/format';
+import { formatAmount, formatShare, shortenAddress } from 'lib/format';
 import { useCurrency } from 'lib/hooks/useCurrency';
 import { useTokenOverrides } from 'lib/hooks/useTokenOverrides';
 import type { AggregatedToken, TokenContractHolding, TokenLocation } from 'lib/portfolio/aggregate';
@@ -53,9 +53,10 @@ const TokenRow = ({ token, totalValueUsd }: Props) => {
 
         <td className="py-2.5 px-2 text-right text-sm tabular">{formatAmount(token.totalAmount)}</td>
 
-        <td className="py-2.5 px-2 text-right">
-          <div className="text-sm font-medium tabular">{formatValue(token.valueUsd)}</div>
-          {share >= 0.1 ? <div className="text-[11px] text-zinc-400 tabular">{share.toFixed(1)}%</div> : null}
+        <td className="py-2.5 px-2 text-right text-sm font-medium tabular">{formatValue(token.valueUsd)}</td>
+
+        <td className="py-2.5 px-2 text-right text-sm tabular text-zinc-500 dark:text-zinc-400">
+          {formatShare(share)}
         </td>
 
         <td className="py-2.5 pr-4 pl-2 text-right w-8">
@@ -104,6 +105,7 @@ const TokenRow = ({ token, totalValueUsd }: Props) => {
               <td className="py-1.5 px-2 text-right text-xs tabular text-zinc-600 dark:text-zinc-400">
                 {formatValue(location.valueUsd)}
               </td>
+              <td />
               <td />
             </tr>
           ))

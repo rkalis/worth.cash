@@ -4,6 +4,7 @@ import {
   formatAmount,
   formatCompactCurrency,
   formatCurrency,
+  formatShare,
   formatTokenPrice,
   USD_DISPLAY,
 } from 'lib/format';
@@ -126,5 +127,27 @@ describe('formatTokenPrice at extreme scales', () => {
   it('keeps the currency symbol at those scales', () => {
     expect(formatTokenPrice(0.0000005, EUR)).toContain('€');
     expect(formatTokenPrice(0.0000005, EUR)).not.toContain('e-');
+  });
+});
+
+describe('formatShare', () => {
+  it('renders a share to one decimal place', () => {
+    expect(formatShare(32.74)).toBe('32.7%');
+    expect(formatShare(100)).toBe('100.0%');
+  });
+
+  // Rounding these to "0.0%" would read as "none of it" for a position sitting right there in the list.
+  it('shows a bound rather than rounding a tiny share to zero', () => {
+    expect(formatShare(0.04)).toBe('<0.1%');
+    expect(formatShare(0.0001)).toBe('<0.1%');
+  });
+
+  // A share of zero means there is nothing to say: the position is unpriced, or it is one of the filtered
+  // rows the total deliberately excludes. Printing "0.0%" there would be a claim, not a blank.
+  it('renders nothing when there is no share to report', () => {
+    expect(formatShare(0)).toBe('');
+    expect(formatShare(null)).toBe('');
+    expect(formatShare(undefined)).toBe('');
+    expect(formatShare(Number.NaN)).toBe('');
   });
 });

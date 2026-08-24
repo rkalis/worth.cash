@@ -99,6 +99,19 @@ export const formatAmount = (value: number | null | undefined): string => {
   return value.toExponential(2);
 };
 
+// A position's share of the portfolio total, for the column that sits beside its value.
+//
+// Shares under a tenth of a percent are shown as a bound rather than rounded to "0.0%", which would read as
+// "none of it" for a position that is right there in the list. A share of zero means there is nothing to
+// say - the position is unpriced, or it is one of the filtered rows that the total deliberately excludes -
+// so it renders as nothing at all rather than as a misleading number.
+export const formatShare = (share: number | null | undefined): string => {
+  if (share === null || share === undefined || !Number.isFinite(share) || share <= 0) return '';
+  if (share < 0.1) return '<0.1%';
+
+  return `${share.toFixed(1)}%`;
+};
+
 export const formatPercentage = (value: number | null | undefined): string => {
   if (value === null || value === undefined || !Number.isFinite(value)) return '-';
   return `${value >= 0 ? '+' : ''}${value.toFixed(2)}%`;

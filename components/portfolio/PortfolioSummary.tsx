@@ -1,5 +1,6 @@
 'use client';
 
+import ManualLocationLogo from 'components/manual/ManualLocationLogo';
 import ChainLogo from 'components/ui/ChainLogo';
 import ExchangeLogo from 'components/ui/ExchangeLogo';
 import { useCurrency } from 'lib/hooks/useCurrency';
@@ -12,13 +13,24 @@ interface Props {
   tokenChainBreakdown: BreakdownEntry[];
   nftChainBreakdown: BreakdownEntry[];
   exchangeBreakdown: BreakdownEntry[];
+  manualBreakdown: BreakdownEntry[];
 }
 
 // Where the money sits, split by kind of holding. The headline figure and the chart behind it live in
 // PortfolioValue; this is the layer underneath that says what makes it up.
-const PortfolioSummary = ({ totals, tokenChainBreakdown, nftChainBreakdown, exchangeBreakdown }: Props) => {
+const PortfolioSummary = ({
+  totals,
+  tokenChainBreakdown,
+  nftChainBreakdown,
+  exchangeBreakdown,
+  manualBreakdown,
+}: Props) => {
+  // The manual tile appears only once something is held that way, so a portfolio with nothing entered by
+  // hand keeps the three tiles it had.
+  const hasManual = totals.manualUsd > 0 || manualBreakdown.length > 0;
+
   return (
-    <div className="grid gap-3 md:grid-cols-3 items-start">
+    <div className={cn('grid gap-3 items-start', hasManual ? 'sm:grid-cols-2 lg:grid-cols-4' : 'md:grid-cols-3')}>
       <SummaryTile label="Tokens" value={totals.tokensUsd} total={totals.totalUsd} breakdown={tokenChainBreakdown} />
       <SummaryTile label="NFTs" value={totals.nftsUsd} total={totals.totalUsd} breakdown={nftChainBreakdown} />
       <SummaryTile
@@ -27,6 +39,9 @@ const PortfolioSummary = ({ totals, tokenChainBreakdown, nftChainBreakdown, exch
         total={totals.totalUsd}
         breakdown={exchangeBreakdown}
       />
+      {hasManual ? (
+        <SummaryTile label="Manual" value={totals.manualUsd} total={totals.totalUsd} breakdown={manualBreakdown} />
+      ) : null}
     </div>
   );
 };
@@ -60,7 +75,8 @@ const SummaryTile = ({ label, value, total, breakdown }: TileProps) => {
             <li key={entry.key} className="flex items-center gap-2 text-xs">
               {entry.chainId !== undefined ? <ChainLogo chainId={entry.chainId} size={14} /> : null}
               {entry.exchange !== undefined ? <ExchangeLogo exchange={entry.exchange} size={14} /> : null}
-              {entry.chainId === undefined && entry.exchange === undefined ? (
+              {entry.isManual ? <ManualLocationLogo location={entry.label} size={14} /> : null}
+              {entry.chainId === undefined && entry.exchange === undefined && !entry.isManual ? (
                 <span className="size-3.5 shrink-0" />
               ) : null}
               <span

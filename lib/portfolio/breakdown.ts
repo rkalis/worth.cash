@@ -10,6 +10,8 @@ export interface BreakdownEntry {
   chainId?: number;
   // Set for exchange-backed entries, for the same reason.
   exchange?: ExchangeKind;
+  // True for a hand-entered holding, which has neither a chain nor a brand to show.
+  isManual?: boolean;
   // True for the single row standing in for everything not listed individually.
   isRemainder?: boolean;
 }
@@ -30,7 +32,14 @@ export const DEFAULT_BREAKDOWN_LIMIT = 10;
 // column of figures under a headline total invites adding it up, and a breakdown that quietly omits part of
 // the total reads as an arithmetic error.
 const buildBreakdown = (
-  entries: Array<{ key: string; label: string; valueUsd: number; chainId?: number; exchange?: ExchangeKind }>,
+  entries: Array<{
+    key: string;
+    label: string;
+    valueUsd: number;
+    chainId?: number;
+    exchange?: ExchangeKind;
+    isManual?: boolean;
+  }>,
   options: BreakdownOptions = {},
 ): BreakdownEntry[] => {
   const minimumUsd = options.minimumUsd ?? DEFAULT_BREAKDOWN_MINIMUM_USD;
@@ -155,6 +164,31 @@ export const buildExchangeBreakdown = (tokens: AggregatedToken[], options?: Brea
       exchange: entry.exchange,
     })),
     // Nobody has ten exchange accounts, so the limit only ever gets in the way here.
+    { maximumEntries: Number.POSITIVE_INFINITY, ...options },
+  );
+};
+
+// Manual holdings grouped by the location the user gave them, so several assets in one place read as one
+// line rather than one per asset.
+export const buildManualBreakdown = (tokens: AggregatedToken[], options?: BreakdownOptions): BreakdownEntry[] => {
+  const valueByLocation = new Map<string, number>();
+
+  for (const token of tokens) {
+    for (const location of token.locations) {
+      if (location.kind !== 'manual' || !location.valueUsd) continue;
+
+      valueByLocation.set(location.name, (valueByLocation.get(location.name) ?? 0) + location.valueUsd);
+    }
+  }
+
+  return buildBreakdown(
+    [...valueByLocation.entries()].map(([label, valueUsd]) => ({
+      key: `manual:${label}`,
+      label,
+      valueUsd,
+      isManual: true,
+    })),
+    // Bounded by however many places the user chose to name, which is never many.
     { maximumEntries: Number.POSITIVE_INFINITY, ...options },
   );
 };

@@ -38,6 +38,7 @@ const DashboardPage = () => {
         tokenChainBreakdown={portfolio.tokenChainBreakdown}
         nftChainBreakdown={portfolio.nftChainBreakdown}
         exchangeBreakdown={portfolio.exchangeBreakdown}
+        manualBreakdown={portfolio.manualBreakdown}
       />
 
       <Card
@@ -55,7 +56,7 @@ const DashboardPage = () => {
           tokens={portfolio.visibleTokens}
           totalValueUsd={portfolio.totals.totalUsd}
           emptyTitle="No balances found"
-          emptyDescription="Add a wallet or an exchange account in settings and run a sync, or loosen the spam filters if you expect to see something here."
+          emptyDescription="Add a wallet, an exchange account, or a manual balance in settings and run a sync, or loosen the spam filters if you expect to see something here."
         />
       </Card>
 

@@ -5,6 +5,8 @@ import Button from 'components/ui/Button';
 import ChainLogo from 'components/ui/ChainLogo';
 import { getChainName } from 'lib/chains';
 import { formatRelativeTime, shortenAddress } from 'lib/format';
+import { useExchangeAccounts } from 'lib/hooks/useExchangeAccounts';
+import { useManualBalances } from 'lib/hooks/useManualBalances';
 import { useSyncStatus } from 'lib/hooks/useSyncStatus';
 import { useWallets } from 'lib/hooks/useWallets';
 import { runSync } from 'lib/sync/engine';
@@ -15,10 +17,17 @@ import { useState } from 'react';
 const SyncBar = () => {
   const { isRunning, tasks, summary, lastSyncedAt, exchangeStatus, coinIdMapAvailable } = useSyncStatus();
   const { wallets } = useWallets();
+  const { accounts } = useExchangeAccounts();
+  const { balances: manualBalances } = useManualBalances();
   const [isExpanded, setIsExpanded] = useState(false);
   const [error, setError] = useState<string>();
 
   const enabledWallets = wallets.filter((wallet) => wallet.enabled === 1);
+
+  // A wallet is not the only thing worth syncing. An exchange account or a manual balance still needs
+  // prices fetched and a point recorded, so the "add a wallet" prompt is only right when there is genuinely
+  // nothing configured at all.
+  const hasSomethingToSync = enabledWallets.length > 0 || accounts.length > 0 || manualBalances.length > 0;
   const activeTasks = tasks.filter((task) => task.status === 'syncing');
   const failedTasks = tasks.filter((task) => task.status === 'error');
 
@@ -31,11 +40,12 @@ const SyncBar = () => {
     }
   };
 
-  if (enabledWallets.length === 0) {
+  if (!hasSomethingToSync) {
     return (
       <div className="flex items-center justify-between gap-4 border border-zinc-200 dark:border-zinc-800 rounded-xl px-4 py-3">
         <p className="text-sm text-zinc-600 dark:text-zinc-400">
-          No wallets tracked yet. Add an address to start building your portfolio.
+          Nothing tracked yet. Add a wallet address, an exchange account, or a manual balance to start building your
+          portfolio.
         </p>
         <Link href="/settings">
           <Button variant="primary" size="sm">

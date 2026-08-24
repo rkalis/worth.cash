@@ -4,6 +4,8 @@ import type {
   StoredBalance,
   StoredExchangeAccount,
   StoredExchangeBalance,
+  StoredManualBalance,
+  StoredManualLedgerEntry,
   StoredNftCollection,
   StoredNftItem,
   StoredPrice,
@@ -12,6 +14,7 @@ import type {
   StoredTokenOverride,
 } from 'lib/db/schema';
 import { FIAT_RATES_SETTING_KEY, type StoredFiatRates } from 'lib/fiat/rates';
+import { buildManualHoldings } from 'lib/manual/balances';
 import type { AggregationInput } from 'lib/portfolio/aggregate';
 import { ASSET_MAP_SETTING_KEY, type StoredAssetMap } from 'lib/prices/assets';
 import { type AppSettings, DEFAULT_SETTINGS } from 'lib/settings/types';
@@ -26,6 +29,8 @@ export interface PortfolioSource {
   nftItems: StoredNftItem[];
   exchangeBalances: StoredExchangeBalance[];
   exchangeAccounts: StoredExchangeAccount[];
+  manualBalances: StoredManualBalance[];
+  manualLedger: StoredManualLedgerEntry[];
   settingsRow?: StoredSetting;
   assetMapRow?: StoredSetting;
   fiatRatesRow?: StoredSetting;
@@ -49,6 +54,8 @@ export const loadPortfolioSource = async (): Promise<PortfolioSource> => {
     nftItems,
     exchangeBalances,
     exchangeAccounts,
+    manualBalances,
+    manualLedger,
     settingsRow,
     assetMapRow,
     fiatRatesRow,
@@ -61,6 +68,8 @@ export const loadPortfolioSource = async (): Promise<PortfolioSource> => {
     db.nftItems.toArray(),
     db.exchangeBalances.toArray(),
     db.exchangeAccounts.toArray(),
+    db.manualBalances.toArray(),
+    db.manualLedger.toArray(),
     db.settings.get(PORTFOLIO_SETTINGS_KEY),
     db.settings.get(ASSET_MAP_SETTING_KEY),
     db.settings.get(FIAT_RATES_SETTING_KEY),
@@ -75,6 +84,8 @@ export const loadPortfolioSource = async (): Promise<PortfolioSource> => {
     nftItems,
     exchangeBalances,
     exchangeAccounts,
+    manualBalances,
+    manualLedger,
     settingsRow,
     assetMapRow,
     fiatRatesRow,
@@ -107,6 +118,13 @@ export const buildAggregationInput = (source: PortfolioSource): AggregationInput
       .filter(([, id]) => Boolean(id)),
   ) as Record<string, string>;
 
+  // Disabling a manual balance hides it exactly as disabling a chain or an exchange account does, and its
+  // ledger stays untouched so re-enabling brings the holding straight back.
+  const manualHoldings = buildManualHoldings(
+    source.manualBalances.filter((balance) => balance.enabled === 1),
+    source.manualLedger,
+  );
+
   return {
     balances: source.balances.filter((balance) => isChainEnabled(balance.chainId)),
     tokens: source.tokens,
@@ -117,6 +135,7 @@ export const buildAggregationInput = (source: PortfolioSource): AggregationInput
     exchangeBalances,
     exchangeAccounts,
     exchangeAssetCoingeckoIds,
+    manualHoldings,
     coinLogoUrls: assetMap?.logos,
     fiatRatesPerUsd: (source.fiatRatesRow?.value as StoredFiatRates | undefined)?.rates,
     spamSettings,

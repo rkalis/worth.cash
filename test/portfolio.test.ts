@@ -1,5 +1,11 @@
 import { createEnabledChainFilter } from 'lib/chains/enabled';
-import type { StoredBalance, StoredExchangeBalance, StoredToken, StoredTransferEvent } from 'lib/db/schema';
+import type {
+  StoredBalance,
+  StoredExchangeBalance,
+  StoredManualBalance,
+  StoredToken,
+  StoredTransferEvent,
+} from 'lib/db/schema';
 import { normaliseExchangeAsset } from 'lib/exchanges/types';
 import { mergeNativeBalanceSeries } from 'lib/history/reconstruct';
 import {
@@ -51,6 +57,25 @@ const buildExchangeBalance = (accountId: string, asset: string, amount: string):
 
 const KRAKEN_ACCOUNT = { id: 'kraken-1', label: 'Kraken', exchange: 'kraken' as const };
 const COINBASE_ACCOUNT = { id: 'coinbase-1', label: 'Coinbase', exchange: 'coinbase' as const };
+
+const buildManualHolding = (
+  id: string,
+  symbol: string,
+  amount: number,
+  overrides: Partial<StoredManualBalance> = {},
+) => ({
+  balance: {
+    id,
+    symbol,
+    location: 'Ledger Nano',
+    coingeckoId: symbol.toLowerCase() === 'btc' ? 'bitcoin' : undefined,
+    createdAt: 0,
+    enabled: 1 as const,
+    ...overrides,
+  },
+  amount,
+  entryCount: 1,
+});
 
 const buildInput = (overrides: Partial<AggregationInput>): AggregationInput => ({
   balances: [],
@@ -563,6 +588,219 @@ describe('aggregateTokens spam and price resolution across a merged row', () => 
     );
 
     expect(position.priceUsd).toBe(3000);
+  });
+});
+
+describe('aggregateTokens with manual balances', () => {
+  // The payoff of pricing a manual holding by coin id: it is the same asset as the one on the exchange, so
+  // it is the same row, with two places listed under it.
+  it('merges a manual holding into the row for the same coin', () => {
+    const [position] = aggregateTokens(
+      buildInput({
+        exchangeBalances: [buildExchangeBalance('kraken-1', 'BTC', '0.25')],
+        exchangeAccounts: [KRAKEN_ACCOUNT],
+        exchangeAssetCoingeckoIds: { BTC: 'bitcoin' },
+        prices: [{ id: 'coingecko:bitcoin', priceUsd: 60000, updatedAt: Date.now() }],
+        manualHoldings: [buildManualHolding('balance-1', 'BTC', 0.5)],
+      }),
+    );
+
+    expect(position.symbol).toBe('BTC');
+    expect(position.totalAmount).toBe(0.75);
+    expect(position.valueUsd).toBe(45000);
+    expect(position.locations.map((location) => location.kind)).toEqual(['manual', 'exchange']);
+  });
+
+  it('splits the row between the exchange and manual totals', () => {
+    const tokens = aggregateTokens(
+      buildInput({
+        exchangeBalances: [buildExchangeBalance('kraken-1', 'BTC', '0.25')],
+        exchangeAccounts: [KRAKEN_ACCOUNT],
+        exchangeAssetCoingeckoIds: { BTC: 'bitcoin' },
+        prices: [{ id: 'coingecko:bitcoin', priceUsd: 60000, updatedAt: Date.now() }],
+        manualHoldings: [buildManualHolding('balance-1', 'BTC', 0.5)],
+      }),
+    );
+
+    const totals = calculateTotals(tokens, []);
+
+    expect(totals.exchangesUsd).toBe(15000);
+    expect(totals.manualUsd).toBe(30000);
+    // And counted exactly once.
+    expect(totals.totalUsd).toBe(45000);
+  });
+
+  // Two tracked wallets on Ethereum already sum into one Ethereum line, and a hand-entered holding reads the
+  // same way: the portfolio answers "how much is on Bitcoin", and the manual balances page answers "in which
+  // wallet".
+  it('collapses several wallets in one place into a single location', () => {
+    const [position] = aggregateTokens(
+      buildInput({
+        prices: [{ id: 'coingecko:bitcoin', priceUsd: 60000, updatedAt: Date.now() }],
+        manualHoldings: [
+          buildManualHolding('balance-1', 'BTC', 0.3, { location: 'Bitcoin', wallet: 'Ledger' }),
+          buildManualHolding('balance-2', 'BTC', 0.05, { location: 'Bitcoin', wallet: 'Green Wallet' }),
+        ],
+      }),
+    );
+
+    expect(position.locations).toHaveLength(1);
+    expect(position.locations[0]).toMatchObject({ kind: 'manual', name: 'Bitcoin', amount: 0.35 });
+    expect(position.locations[0].valueUsd).toBe(21000);
+  });
+
+  it('keeps holdings in different places apart', () => {
+    const [position] = aggregateTokens(
+      buildInput({
+        prices: [{ id: 'coingecko:bitcoin', priceUsd: 60000, updatedAt: Date.now() }],
+        manualHoldings: [
+          buildManualHolding('balance-1', 'BTC', 0.3, { location: 'Bitcoin' }),
+          buildManualHolding('balance-2', 'BTC', 0.05, { location: 'Cold storage' }),
+        ],
+      }),
+    );
+
+    expect(position.locations.map((location) => location.name).sort()).toEqual(['Bitcoin', 'Cold storage']);
+  });
+
+  // Typing the same place two different ways should not split it in two.
+  it('matches a place case-insensitively', () => {
+    const [position] = aggregateTokens(
+      buildInput({
+        prices: [{ id: 'coingecko:bitcoin', priceUsd: 60000, updatedAt: Date.now() }],
+        manualHoldings: [
+          buildManualHolding('balance-1', 'BTC', 0.3, { location: 'Bitcoin' }),
+          buildManualHolding('balance-2', 'BTC', 0.05, { location: 'bitcoin' }),
+        ],
+      }),
+    );
+
+    expect(position.locations).toHaveLength(1);
+    expect(position.locations[0].amount).toBe(0.35);
+  });
+
+  // The page that lists holdings individually prices them by coin, so the row has to say which coin it is.
+  it('exposes the coin id it was identified by', () => {
+    const [position] = aggregateTokens(
+      buildInput({
+        prices: [{ id: 'coingecko:bitcoin', priceUsd: 60000, updatedAt: Date.now() }],
+        manualHoldings: [buildManualHolding('balance-1', 'BTC', 0.5)],
+      }),
+    );
+
+    expect(position.coingeckoId).toBe('bitcoin');
+  });
+
+  it('names the location the user gave it', () => {
+    const [position] = aggregateTokens(
+      buildInput({
+        prices: [{ id: 'coingecko:bitcoin', priceUsd: 60000, updatedAt: Date.now() }],
+        manualHoldings: [buildManualHolding('balance-1', 'BTC', 0.5, { location: 'Cold storage' })],
+      }),
+    );
+
+    expect(position.locations[0]).toMatchObject({ kind: 'manual', name: 'Cold storage', amount: 0.5 });
+  });
+
+  // Two places holding the same coin are two locations on one row, which is the whole reason a manual
+  // balance carries a location at all.
+  it('keeps two manual holdings of one coin as separate locations', () => {
+    const [position] = aggregateTokens(
+      buildInput({
+        prices: [{ id: 'coingecko:bitcoin', priceUsd: 60000, updatedAt: Date.now() }],
+        manualHoldings: [
+          buildManualHolding('balance-1', 'BTC', 0.5, { location: 'Ledger' }),
+          buildManualHolding('balance-2', 'BTC', 0.25, { location: 'Cold storage' }),
+        ],
+      }),
+    );
+
+    expect(position.locations).toHaveLength(2);
+    expect(position.totalAmount).toBe(0.75);
+  });
+
+  // Without a price source it can only ever be a quantity, so it must not borrow a value from anywhere.
+  it('leaves a holding with no price source unpriced and on its own row', () => {
+    const result = aggregateTokens(
+      buildInput({
+        prices: [{ id: 'coingecko:bitcoin', priceUsd: 60000, updatedAt: Date.now() }],
+        manualHoldings: [
+          buildManualHolding('balance-1', 'BTC', 0.5),
+          buildManualHolding('balance-2', 'RARE', 100, { coingeckoId: undefined }),
+        ],
+        spamSettings: { ...spamSettings, hideUnpricedTokens: false },
+      }),
+    );
+
+    const unpriced = result.find((token) => token.symbol === 'RARE')!;
+    expect(unpriced.priceUsd).toBeNull();
+    expect(unpriced.valueUsd).toBeNull();
+    expect(unpriced.overrideKey).toBe('manual:balance-2');
+  });
+
+  it('ignores a holding whose ledger nets to zero', () => {
+    const result = aggregateTokens(
+      buildInput({
+        prices: [{ id: 'coingecko:bitcoin', priceUsd: 60000, updatedAt: Date.now() }],
+        manualHoldings: [buildManualHolding('balance-1', 'BTC', 0)],
+      }),
+    );
+
+    expect(result).toHaveLength(0);
+  });
+});
+
+describe('manual balances and spam', () => {
+  const spamToken = '0x00000000000000000000000000000000000000ff';
+
+  // A holding the user typed in themselves is at least as strong a signal as an exchange listing, and
+  // hiding the row over a heuristics false positive on a sibling would take that balance out of the total.
+  it('does not let a spam-flagged on-chain sibling hide a manual holding', () => {
+    const [position] = aggregateTokens(
+      buildInput({
+        balances: [buildBalance(1, spamToken, '1000000000000000000')],
+        tokens: [
+          buildToken(1, spamToken, {
+            symbol: 'BTC',
+            decimals: 18,
+            coingeckoId: 'bitcoin',
+            isSpam: 1,
+            spamReason: 'Name looks like a website',
+          }),
+        ],
+        prices: [{ id: 'coingecko:bitcoin', priceUsd: 60000, updatedAt: Date.now() }],
+        manualHoldings: [buildManualHolding('balance-1', 'BTC', 1)],
+      }),
+    );
+
+    expect(position.isSpam).toBe(false);
+    expect(position.isHidden).toBe(false);
+    expect(calculateTotals([position], []).manualUsd).toBe(60000);
+  });
+
+  // Summing decimal strings through Number can leave a few atoms behind, and a residue of 1e-17 would show
+  // a $0.00 Manual tile for a holding that was fully sold.
+  it('ignores a float residue left by a fully sold holding', () => {
+    const result = aggregateTokens(
+      buildInput({
+        prices: [{ id: 'coingecko:bitcoin', priceUsd: 60000, updatedAt: Date.now() }],
+        manualHoldings: [buildManualHolding('balance-1', 'BTC', 1e-17)],
+      }),
+    );
+
+    expect(result).toHaveLength(0);
+  });
+
+  it('still counts a genuinely small holding', () => {
+    const result = aggregateTokens(
+      buildInput({
+        prices: [{ id: 'coingecko:bitcoin', priceUsd: 60000, updatedAt: Date.now() }],
+        manualHoldings: [buildManualHolding('balance-1', 'BTC', 0.00000001)],
+        spamSettings: { ...spamSettings, dustThresholdUsd: 0 },
+      }),
+    );
+
+    expect(result).toHaveLength(1);
   });
 });
 

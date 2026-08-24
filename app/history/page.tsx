@@ -11,6 +11,11 @@ import { formatDateShort, formatDateTimeUtc } from 'lib/format';
 import type { ReconstructionStep } from 'lib/history/progress';
 import { reconstructSnapshotAt, type SnapshotReconstruction } from 'lib/history/reconstruct';
 import {
+  type ManualReprocessProgress,
+  type ManualReprocessResult,
+  reprocessManualBalances,
+} from 'lib/history/reprocess';
+import {
   DEFAULT_SNAPSHOT_TIME_UTC,
   deleteSnapshot,
   snapshotTimestampFromUtcInput,
@@ -28,6 +33,11 @@ const HistoryPage = () => {
   const [date, setDate] = useState(() => toUtcDateInputValue(Date.now()));
   const [time, setTime] = useState(DEFAULT_SNAPSHOT_TIME_UTC);
   const [includeExchangeHistory, setIncludeExchangeHistory] = useState(false);
+
+  const [isReprocessing, setIsReprocessing] = useState(false);
+  const [reprocessProgress, setReprocessProgress] = useState<ManualReprocessProgress>();
+  const [reprocessResult, setReprocessResult] = useState<ManualReprocessResult>();
+  const [reprocessError, setReprocessError] = useState<string>();
 
   const [isBuilding, setIsBuilding] = useState(false);
   const [steps, setSteps] = useState<ReconstructionStep[]>();
@@ -53,6 +63,22 @@ const HistoryPage = () => {
       setError(buildError instanceof Error ? buildError.message : String(buildError));
     } finally {
       setIsBuilding(false);
+    }
+  };
+
+  const reprocessManual = async () => {
+    setIsReprocessing(true);
+    setReprocessError(undefined);
+    setReprocessResult(undefined);
+    setReprocessProgress(undefined);
+
+    try {
+      setReprocessResult(await reprocessManualBalances(setReprocessProgress));
+    } catch (reprocessingError) {
+      setReprocessError(reprocessingError instanceof Error ? reprocessingError.message : String(reprocessingError));
+    } finally {
+      setIsReprocessing(false);
+      setReprocessProgress(undefined);
     }
   };
 
@@ -128,6 +154,39 @@ const HistoryPage = () => {
         {result ? <ReconstructionSummary result={result} formatValue={formatValue} /> : null}
       </Card>
 
+      <Card title="Manual balances in history" bodyClassName="flex flex-col gap-3">
+        <p className="text-xs text-zinc-600 dark:text-zinc-400">
+          Snapshots taken before you recorded a manual balance know nothing about it. This replays each balance's ledger
+          against every snapshot already stored and folds the result into it, pricing what was held at the price of that
+          moment. It never adds a snapshot, and it never touches the on-chain or exchange figures in one: those were
+          read at the time and are more accurate than anything replayed. Running it again after editing a ledger simply
+          brings the same points back up to date.
+        </p>
+
+        <div>
+          <Button
+            variant="secondary"
+            size="sm"
+            onClick={reprocessManual}
+            loading={isReprocessing}
+            disabled={isReprocessing}
+          >
+            Update existing snapshots
+          </Button>
+        </div>
+
+        {reprocessProgress ? (
+          <p className="text-xs text-zinc-500 tabular">
+            {reprocessProgress.phase === 'fetching-prices' ? 'Fetching historical prices' : 'Updating snapshots'}:{' '}
+            {reprocessProgress.completed} / {reprocessProgress.total}
+          </p>
+        ) : null}
+
+        {reprocessError ? <p className="text-xs text-red-600 dark:text-red-400">{reprocessError}</p> : null}
+
+        {reprocessResult ? <ReprocessSummary result={reprocessResult} /> : null}
+      </Card>
+
       <Card title="Portfolio value" bodyClassName="p-2">
         <ValueChart points={history.points} height={320} />
       </Card>
@@ -193,6 +252,42 @@ const HistoryPage = () => {
           </div>
         )}
       </Card>
+    </div>
+  );
+};
+
+const ReprocessSummary = ({ result }: { result: ManualReprocessResult }) => {
+  if (result.status === 'no-snapshots') {
+    return (
+      <p className="text-xs text-zinc-600 dark:text-zinc-400">
+        There are no snapshots to update yet. Run a sync to record one, or add a snapshot above for a past moment.
+      </p>
+    );
+  }
+
+  return (
+    <div className="text-xs text-zinc-600 dark:text-zinc-400 flex flex-col gap-1">
+      <span>
+        {result.snapshotsChanged === 0
+          ? `Checked ${result.snapshotsExamined} snapshot${result.snapshotsExamined === 1 ? '' : 's'}; every one was already up to date.`
+          : `Updated ${result.snapshotsChanged} of ${result.snapshotsExamined} snapshot${
+              result.snapshotsExamined === 1 ? '' : 's'
+            } with ${result.positionsWritten} manual holding${result.positionsWritten === 1 ? '' : 's'}.`}
+      </span>
+
+      {result.unpricedPositionCount > 0 ? (
+        <span>
+          {result.unpricedPositionCount} holding{result.unpricedPositionCount === 1 ? ' had' : 's had'} no historical
+          price at the moment they were held, and contributed nothing to those totals.
+        </span>
+      ) : null}
+
+      {result.earliestPricedTimestamp ? (
+        <span className="text-amber-700 dark:text-amber-500">
+          Your CoinGecko plan only serves prices back to {formatDateShort(result.earliestPricedTimestamp)}, so snapshots
+          older than that could not be priced. A paid plan removes this limit.
+        </span>
+      ) : null}
     </div>
   );
 };

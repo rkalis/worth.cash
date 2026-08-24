@@ -2,7 +2,14 @@ import { getChainConfig } from 'lib/chains';
 import { NATIVE_TOKEN_ADDRESS } from 'lib/constants';
 import { db } from 'lib/db';
 import { coingeckoPriceKey, onChainPriceKey } from 'lib/db/keys';
-import type { SnapshotPosition, StoredSnapshot, StoredToken, StoredTransferEvent } from 'lib/db/schema';
+import type {
+  SnapshotPosition,
+  StoredManualBalance,
+  StoredManualLedgerEntry,
+  StoredSnapshot,
+  StoredToken,
+  StoredTransferEvent,
+} from 'lib/db/schema';
 import { resolveBlockAtTimestamp } from 'lib/history/blocks';
 import { type NativeBalanceSeries, readHistoricalNativeBalances } from 'lib/history/native-balances';
 import {
@@ -10,6 +17,7 @@ import {
   type ReconstructionProgressListener,
   type ReconstructionProgressReporter,
 } from 'lib/history/progress';
+import { amountAt, groupEntriesByBalance } from 'lib/manual/balances';
 import { fetchCoinGeckoNftFloorHistory } from 'lib/nfts/coingecko';
 import { resolveCoinGeckoIdsForSymbols } from 'lib/prices/assets';
 import {
@@ -152,11 +160,26 @@ export const reconstructSnapshotAt = async (
   const nftSeries = buildNftPositionSeries(events, timestamps, blocksByChain, collectionNames);
   const exchangeSeries = buildExchangeBalanceSeries(ledgerEntries, timestamps);
 
+  // Manual holdings replay from their own ledger, which is the whole reason the ledger exists: without it a
+  // hand-entered balance could only ever be valued at today's quantity, and every past point would claim
+  // the user had always held it.
+  const [manualBalances, manualLedger] = await Promise.all([
+    db.manualBalances.where('enabled').equals(1).toArray(),
+    db.manualLedger.toArray(),
+  ]);
+  const manualSeries = buildManualBalanceSeries(manualBalances, manualLedger, timestamps);
+  const manualCoingeckoIds = new Map(
+    manualBalances
+      .filter((balance) => balance.coingeckoId)
+      .map((balance) => [`manual:${balance.id}`, balance.coingeckoId as string]),
+  );
+
   // Checked before any price is fetched. A date before the wallet held anything, or before its history was
   // synced, otherwise costs a full round of price requests to arrive at a total of nothing.
   const heldAnything =
-    [...balanceSeries.values(), ...exchangeSeries.values()].some((series) => series.amounts[0] > 0) ||
-    [...nftSeries.values()].some((series) => series.counts[0] > 0);
+    [...balanceSeries.values(), ...exchangeSeries.values(), ...manualSeries.values()].some(
+      (series) => series.amounts[0] > 0,
+    ) || [...nftSeries.values()].some((series) => series.counts[0] > 0);
 
   if (!heldAnything) {
     progress.skipRemaining();
@@ -171,6 +194,7 @@ export const reconstructSnapshotAt = async (
   // finishes and one that spends its whole budget on assets worth nothing.
   const heldBalanceKeys = keysHeldAt(balanceSeries);
   const heldExchangeKeys = keysHeldAt(exchangeSeries);
+  const heldManualKeys = keysHeldAt(manualSeries);
   const heldCollectionKeys = [...nftSeries.entries()]
     .filter(([, series]) => series.counts[0] > 0)
     .map(([collectionKey]) => collectionKey);
@@ -183,7 +207,8 @@ export const reconstructSnapshotAt = async (
   const priceSeriesByKey = await fetchPriceSeries(
     heldBalanceKeys.filter((priceKey) => !knownUnpricedKeys.has(priceKey)),
     heldExchangeKeys,
-    tokensById,
+    heldManualKeys,
+    { tokensById, manualCoingeckoIds },
     window,
     progress,
   );
@@ -194,7 +219,10 @@ export const reconstructSnapshotAt = async (
   const nftFloorHistory = await fetchNftFloorHistory(heldCollectionKeys, window, progress);
 
   const positions: SnapshotPosition[] = [];
-  progress.start('valuing-positions', balanceSeries.size + nftSeries.size + exchangeSeries.size);
+  progress.start(
+    'valuing-positions',
+    heldBalanceKeys.length + heldCollectionKeys.length + heldExchangeKeys.length + heldManualKeys.length,
+  );
 
   for (const [priceKey, series] of balanceSeries) {
     const amount = series.amounts[0];
@@ -245,17 +273,30 @@ export const reconstructSnapshotAt = async (
     });
   }
 
+  for (const [priceKey, series] of manualSeries) {
+    const amount = series.amounts[0];
+    if (amount === 0) continue;
+
+    const priceUsd = priceAt(priceSeriesByKey.get(priceKey) ?? { priceKey, points: [] }, timestamp);
+    positions.push({
+      priceKey,
+      symbol: series.symbol,
+      amount,
+      priceUsd,
+      valueUsd: priceUsd === null ? 0 : amount * priceUsd,
+      kind: 'manual',
+    });
+  }
+
   // Nothing held is reported rather than written. It is the honest answer for a date before the wallet
   // held anything, and it is also what a portfolio with no stored history looks like, so writing a zero
   // would turn "we do not know" into a claim.
-  if (positions.length === 0) return { ...empty, status: 'no-holdings' };
+  // Nothing held, or nothing that could be valued. A point worth zero is indistinguishable on the chart
+  // from a portfolio that really was empty, which is the same reason recordCurrentSnapshot refuses one.
+  const totalUsd = positions.reduce((total, position) => total + position.valueUsd, 0);
+  if (positions.length === 0 || totalUsd === 0) return { ...empty, status: 'no-holdings' };
 
-  const snapshot: StoredSnapshot = {
-    timestamp,
-    totalUsd: positions.reduce((total, position) => total + position.valueUsd, 0),
-    createdAt: Date.now(),
-    positions,
-  };
+  const snapshot: StoredSnapshot = { timestamp, totalUsd, createdAt: Date.now(), positions };
 
   progress.complete('valuing-positions');
 
@@ -263,7 +304,7 @@ export const reconstructSnapshotAt = async (
 
   // Counted over what was held, which is the only thing that could have contributed. Counting every key in
   // the series would report tokens sold years earlier as having gone unpriced at this moment.
-  const unpricedAssetCount = [...heldBalanceKeys, ...heldExchangeKeys].filter(
+  const unpricedAssetCount = [...heldBalanceKeys, ...heldExchangeKeys, ...heldManualKeys].filter(
     (priceKey) => (priceSeriesByKey.get(priceKey)?.points.length ?? 0) === 0,
   ).length;
 
@@ -524,10 +565,44 @@ const findKnownUnpricedKeys = async (
   );
 };
 
+// One series per manual balance rather than per coin.
+//
+// Keyed by the balance id, not by `coingecko:${id}`, because a native token series already uses that key
+// shape: a manual ETH holding would land on top of the on-chain ETH series inside the same Map and one of
+// them would silently disappear. Two manual balances of the same coin in different places also stay
+// separate this way, which is what their locations mean.
+const buildManualBalanceSeries = (
+  balances: StoredManualBalance[],
+  entries: StoredManualLedgerEntry[],
+  timestamps: number[],
+): Map<string, BalanceSeries> => {
+  const entriesByBalance = groupEntriesByBalance(entries);
+  const series = new Map<string, BalanceSeries>();
+
+  for (const balance of balances) {
+    const balanceEntries = entriesByBalance.get(balance.id) ?? [];
+    if (balanceEntries.length === 0) continue;
+
+    series.set(`manual:${balance.id}`, {
+      symbol: balance.symbol.toUpperCase(),
+      amounts: timestamps.map((timestamp) => amountAt(balanceEntries, timestamp)),
+    });
+  }
+
+  return series;
+};
+
+interface PriceSources {
+  tokensById: Map<string, StoredToken>;
+  // Manual series key to the coin id the user chose to price that holding by.
+  manualCoingeckoIds: Map<string, string>;
+}
+
 const fetchPriceSeries = async (
   tokenPriceKeys: string[],
   exchangePriceKeys: string[],
-  tokensById: Map<string, StoredToken>,
+  manualPriceKeys: string[],
+  sources: PriceSources,
   window: HistoryWindow,
   progress: ReconstructionProgressReporter,
 ): Promise<Map<string, HistoricalPriceSeries>> => {
@@ -538,14 +613,42 @@ const fetchPriceSeries = async (
   const coingeckoIdsBySymbol =
     exchangeSymbols.length > 0 ? await resolveCoinGeckoIdsForSymbols(exchangeSymbols) : new Map<string, string>();
 
-  const allKeys = [...tokenPriceKeys, ...exchangePriceKeys];
+  // Manual holdings are keyed by balance so that two of them, or a manual holding and a native one, cannot
+  // overwrite each other in the series map. Their prices are another matter: several holdings can share a
+  // coin, so they are fetched once per coin and the result handed to each holding that asked for it.
+  const manualKeysByCoin = new Map<string, string[]>();
+  for (const priceKey of manualPriceKeys) {
+    const coingeckoId = sources.manualCoingeckoIds.get(priceKey);
+    if (!coingeckoId) {
+      // No price source is a choice the user made: the holding is a quantity and nothing more.
+      seriesByKey.set(priceKey, { priceKey, points: [] });
+      continue;
+    }
+
+    const existing = manualKeysByCoin.get(coingeckoId);
+    if (existing) {
+      existing.push(priceKey);
+    } else {
+      manualKeysByCoin.set(coingeckoId, [priceKey]);
+    }
+  }
+
+  const allKeys = [...tokenPriceKeys, ...exchangePriceKeys, ...manualKeysByCoin.keys()];
   let completed = 0;
 
   progress.start('fetching-prices', allKeys.length);
 
   await mapAsyncBounded(allKeys, PRICE_FETCH_CONCURRENCY, async (priceKey) => {
-    const series = await fetchSeriesForKey(priceKey, tokensById, coingeckoIdsBySymbol, window);
-    seriesByKey.set(priceKey, series);
+    const manualKeys = manualKeysByCoin.get(priceKey);
+
+    if (manualKeys) {
+      // Stored under the coin's own price key, so the rows are shared with every other holding of it rather
+      // than duplicated once per manual balance.
+      const series = await fetchHistoricalSeriesForCoin(priceKey, coingeckoPriceKey(priceKey), window);
+      for (const manualKey of manualKeys) seriesByKey.set(manualKey, { ...series, priceKey: manualKey });
+    } else {
+      seriesByKey.set(priceKey, await fetchSeriesForKey(priceKey, sources, coingeckoIdsBySymbol, window));
+    }
 
     completed += 1;
     progress.advance('fetching-prices', completed);
@@ -557,7 +660,7 @@ const fetchPriceSeries = async (
 
 const fetchSeriesForKey = async (
   priceKey: string,
-  tokensById: Map<string, StoredToken>,
+  sources: PriceSources,
   coingeckoIdsBySymbol: Map<string, string>,
   window: HistoryWindow,
 ): Promise<HistoricalPriceSeries> => {
@@ -575,7 +678,7 @@ const fetchSeriesForKey = async (
 
   const [chainIdPart, address] = priceKey.split(':');
   const chainId = Number(chainIdPart);
-  const token = tokensById.get(`${chainId}:${address}`);
+  const token = sources.tokensById.get(`${chainId}:${address}`);
 
   if (!token) return { priceKey, points: [] };
 

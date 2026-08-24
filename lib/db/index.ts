@@ -6,6 +6,8 @@ import type {
   StoredExchangeBalance,
   StoredExchangeLedgerEntry,
   StoredHistoricalPrice,
+  StoredManualBalance,
+  StoredManualLedgerEntry,
   StoredNftCollection,
   StoredNftItem,
   StoredPrice,
@@ -35,6 +37,8 @@ export class PortfolioDatabase extends Dexie {
   exchangeLedger!: Table<StoredExchangeLedgerEntry, string>;
   tokenOverrides!: Table<StoredTokenOverride, string>;
   blockMarkers!: Table<StoredBlockMarker, string>;
+  manualBalances!: Table<StoredManualBalance, string>;
+  manualLedger!: Table<StoredManualLedgerEntry, string>;
 
   constructor() {
     super('portfolio-tracker');
@@ -61,6 +65,13 @@ export class PortfolioDatabase extends Dexie {
       exchangeLedger: 'id, [accountId+timestamp], accountId, asset, timestamp',
       tokenOverrides: 'id',
       blockMarkers: 'id, [chainId+timestamp], chainId',
+    });
+
+    // Manual balances arrived later. Adding stores in a new version leaves every existing table untouched,
+    // so no data is rebuilt to get them.
+    this.version(2).stores({
+      manualBalances: 'id, enabled, symbol',
+      manualLedger: 'id, [balanceId+timestamp], balanceId, timestamp',
     });
   }
 }

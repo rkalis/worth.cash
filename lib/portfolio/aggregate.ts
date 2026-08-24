@@ -14,6 +14,7 @@ import type {
 } from 'lib/db/schema';
 import { fiatPriceUsd, isFiatAssetCode } from 'lib/fiat/rates';
 import { shortenAddress } from 'lib/format';
+import type { ManualHolding } from 'lib/manual/balances';
 import type { SpamSettings } from 'lib/settings/types';
 import { isNullish } from 'lib/utils';
 import { formatUnits } from 'viem';
@@ -46,9 +47,16 @@ export interface TokenExchangeLocation extends TokenLocationBase {
   asset: string;
 }
 
-// Where a holding physically sits. A chain and an exchange account are the same kind of fact about an asset:
-// somewhere it is held. Modelling them as one list is what lets ETH on Base and ETH on Kraken be one row.
-export type TokenLocation = TokenChainLocation | TokenExchangeLocation;
+// A holding the user recorded by hand, because the app has no way to discover it: a Bitcoin balance, a
+// Solana wallet, anything on a chain that is not supported.
+export interface TokenManualLocation extends TokenLocationBase {
+  kind: 'manual';
+}
+
+// Where a holding physically sits. A chain, an exchange account and a balance typed in by hand are the same
+// kind of fact about an asset: somewhere it is held. Modelling them as one list is what lets ETH on Base,
+// ETH on Kraken and BTC in cold storage be rows of the same shape.
+export type TokenLocation = TokenChainLocation | TokenExchangeLocation | TokenManualLocation;
 
 export interface AggregatedToken {
   key: string;
@@ -59,6 +67,9 @@ export interface AggregatedToken {
   // The row a manual show/hide decision is recorded against. Derived from the asset's identity rather than
   // from one of its locations, so the target cannot move when a balance shifts between chains or exchanges.
   overrideKey: string;
+  // The coin this row was identified by, when CoinGecko lists it. Exposed so a view that lists holdings
+  // individually can price them without re-deriving the identity.
+  coingeckoId?: string;
   // Every other key this position could be recorded under: one per contract it is deployed as, one per
   // ticker it trades under. Honoured when reading, and written alongside the primary key so that losing an
   // identity cannot lose the decision.
@@ -67,10 +78,11 @@ export interface AggregatedToken {
   priceUsd: number | null;
   valueUsd: number | null;
   locations: TokenLocation[];
-  // The same value split by where it sits. The summary reports on-chain and exchange holdings separately,
-  // and it can no longer get that by counting rows now that one row can span both.
+  // The same value split by where it sits. The summary reports each kind of place separately, and it can no
+  // longer get that by counting rows now that one row can span all of them.
   chainValueUsd: number;
   exchangeValueUsd: number;
+  manualValueUsd: number;
   isSpam: boolean;
   // Whether this position is hidden from the main list, and why. Hidden positions are still returned so the
   // UI can show them in a collapsible section rather than making them vanish.
@@ -103,6 +115,7 @@ export interface PortfolioTotals {
   tokensUsd: number;
   nftsUsd: number;
   exchangesUsd: number;
+  manualUsd: number;
   totalUsd: number;
 }
 
@@ -116,6 +129,8 @@ export interface AggregationInput {
   exchangeBalances: StoredExchangeBalance[];
   exchangeAccounts: Array<Pick<StoredExchangeAccount, 'id' | 'label' | 'exchange'>>;
   exchangeAssetCoingeckoIds: Record<string, string>;
+  // Holdings the user recorded by hand, already reduced to a quantity from their ledger.
+  manualHoldings?: ManualHolding[];
   // Logos keyed by CoinGecko coin id, from the market data the exchange pricing already fetches. It is the
   // only icon source for an asset with no contract to look up, which is every exchange-held coin.
   coinLogoUrls?: Record<string, string>;
@@ -138,7 +153,11 @@ export const aggregateTokens = (input: AggregationInput): AggregatedToken[] => {
   const pricesById = new Map(input.prices.map((price) => [price.id, price.priceUsd]));
   const overridesById = new Map(input.overrides.map((override) => [override.id, override.hidden]));
 
-  const positions = [...buildChainPositions(input, pricesById), ...buildExchangePositions(input, pricesById)];
+  const positions = [
+    ...buildChainPositions(input, pricesById),
+    ...buildExchangePositions(input, pricesById),
+    ...buildManualPositions(input, pricesById),
+  ];
 
   const groups = new Map<string, Position[]>();
 
@@ -172,6 +191,7 @@ interface Position {
   logoUrl?: string;
   chain?: { chainId: number; chainName: string; token: string };
   exchange?: { accountId: string; accountLabel: string; exchange: ExchangeKind; asset: string };
+  manual?: { balanceId: string; location: string; wallet?: string };
 }
 
 const buildChainPositions = (input: AggregationInput, pricesById: Map<string, number | null>): Position[] => {
@@ -275,6 +295,38 @@ const buildExchangePositions = (input: AggregationInput, pricesById: Map<string,
   });
 };
 
+// Below this a manual holding is float residue rather than a quantity. Chosen well under any real holding:
+// even a satoshi is 1e-8.
+const MINIMUM_MANUAL_AMOUNT = 1e-12;
+
+// Manual holdings price exactly like an exchange holding: by coin id, which is also what merges them into
+// the same row as an on-chain or exchange balance of the same asset. One without a coin id keeps an identity
+// of its own and can never merge with anything.
+const buildManualPositions = (input: AggregationInput, pricesById: Map<string, number | null>): Position[] =>
+  (input.manualHoldings ?? []).flatMap((holding) => {
+    const { balance, amount } = holding;
+
+    // Summing decimal strings through Number can leave a few atoms behind when a ledger nets to exactly
+    // zero, and a residue of 1e-17 would render as a $0.00 Manual tile for a holding that was fully sold.
+    if (!Number.isFinite(amount) || amount < MINIMUM_MANUAL_AMOUNT) return [];
+
+    const coingeckoId = balance.coingeckoId;
+
+    return [
+      {
+        identity: coingeckoId ? `coin:${coingeckoId}` : `manual:${balance.id}`,
+        symbol: balance.symbol.toUpperCase(),
+        amount,
+        priceUsd: coingeckoId ? (pricesById.get(coingeckoPriceKey(coingeckoId)) ?? null) : null,
+        priceSource: 'coin',
+        coingeckoId,
+        isSpam: false,
+        logoUrl: coingeckoId ? input.coinLogoUrls?.[coingeckoId] : undefined,
+        manual: { balanceId: balance.id, location: balance.location, wallet: balance.wallet },
+      } satisfies Position,
+    ];
+  });
+
 const buildAggregatedToken = (
   cluster: Position[],
   input: AggregationInput,
@@ -291,6 +343,7 @@ const buildAggregatedToken = (
 
   const chainValueUsd = sumLocationValues(locations, 'chain');
   const exchangeValueUsd = sumLocationValues(locations, 'exchange');
+  const manualValueUsd = sumLocationValues(locations, 'manual');
 
   // One holding describes the row: its symbol and its icon.
   const primary = pickPrimaryPosition(cluster);
@@ -316,6 +369,7 @@ const buildAggregatedToken = (
     symbol: primary.symbol,
     logoUrl: primary.logoUrl ?? (coingeckoId ? input.coinLogoUrls?.[coingeckoId] : undefined),
     overrideKey,
+    coingeckoId,
     supersededOverrideKeys,
     totalAmount,
     priceUsd,
@@ -323,6 +377,7 @@ const buildAggregatedToken = (
     locations,
     chainValueUsd,
     exchangeValueUsd,
+    manualValueUsd,
     isSpam: spam.isSpam,
     ...hidden,
   };
@@ -335,6 +390,7 @@ const buildAggregatedToken = (
 const buildLocations = (cluster: Position[], priceUsd: number | null): TokenLocation[] => {
   const chainLocations = new Map<number, TokenChainLocation>();
   const exchangeLocations = new Map<string, TokenExchangeLocation>();
+  const manualLocations = new Map<string, TokenManualLocation>();
 
   for (const position of cluster) {
     if (position.chain) {
@@ -353,6 +409,30 @@ const buildLocations = (cluster: Position[], priceUsd: number | null): TokenLoca
           amount: position.amount,
           valueUsd: null,
           contracts: [{ token, amount: position.amount }],
+        });
+      }
+      continue;
+    }
+
+    if (position.manual) {
+      const { location } = position.manual;
+
+      // Grouped by where the holding is, not by which of the user's wallets it sits in. Two tracked wallets
+      // on Ethereum already sum into one Ethereum line, and a hand-entered holding should read the same way:
+      // the portfolio answers "how much is on Bitcoin", and the manual balances page answers "in which
+      // wallet". Matched case-insensitively so "Bitcoin" and "bitcoin" do not become two places.
+      const groupKey = location.toLowerCase();
+      const existing = manualLocations.get(groupKey);
+
+      if (existing) {
+        existing.amount += position.amount;
+      } else {
+        manualLocations.set(groupKey, {
+          kind: 'manual',
+          key: `manual:${groupKey}`,
+          name: location,
+          amount: position.amount,
+          valueUsd: null,
         });
       }
       continue;
@@ -387,6 +467,7 @@ const buildLocations = (cluster: Position[], priceUsd: number | null): TokenLoca
       contracts: [...location.contracts].sort((a, b) => b.amount - a.amount),
     })),
     ...exchangeLocations.values(),
+    ...manualLocations.values(),
   ].map((location) => ({
     ...location,
     valueUsd: isNullish(priceUsd) ? null : location.amount * priceUsd,
@@ -396,11 +477,13 @@ const buildLocations = (cluster: Position[], priceUsd: number | null): TokenLoca
     const byValue = (b.valueUsd ?? 0) - (a.valueUsd ?? 0);
     if (byValue !== 0) return byValue;
 
-    // Unpriced locations all tie at zero, so chains lead and equal-value places keep a stable order.
-    if (a.kind !== b.kind) return a.kind === 'chain' ? -1 : 1;
+    // Unpriced locations all tie at zero, so a fixed order by kind keeps equal-value places from shuffling.
+    if (a.kind !== b.kind) return LOCATION_KIND_ORDER[a.kind] - LOCATION_KIND_ORDER[b.kind];
     return b.amount - a.amount;
   });
 };
+
+const LOCATION_KIND_ORDER: Record<TokenLocation['kind'], number> = { chain: 0, exchange: 1, manual: 2 };
 
 const sumLocationValues = (locations: TokenLocation[], kind: TokenLocation['kind']): number =>
   locations
@@ -428,13 +511,15 @@ const resolveClusterPrice = (cluster: Position[]): number | null => {
 //
 // Spam is a property of a contract, and the heuristics run per contract, so this asks about all of them
 // rather than about one chosen holding. A row is spam only when every on-chain deployment of it is: a single
-// false positive on a dust balance must not hide the real holdings merged into the same row. An exchange
-// listing settles it outright, because Kraken and Coinbase do not list airdrop spam, and hiding the row
-// would take that balance out of the total too.
+// false positive on a dust balance must not hide the real holdings merged into the same row.
+//
+// An exchange listing settles it outright, because Kraken and Coinbase do not list airdrop spam. So does a
+// manual holding, for a stronger reason: the user typed it in themselves. Either way, hiding the row would
+// take that balance out of the total along with it.
 const resolveClusterSpam = (cluster: Position[]): { isSpam: boolean; spamReason?: string } => {
   const chainPositions = cluster.filter((position) => position.chain);
 
-  if (chainPositions.length === 0 || cluster.some((position) => position.exchange)) {
+  if (chainPositions.length === 0 || cluster.some((position) => position.exchange || position.manual)) {
     return { isSpam: false };
   }
 
@@ -452,6 +537,8 @@ const resolveClusterSpam = (cluster: Position[]): { isSpam: boolean; spamReason?
 const pickPrimaryPosition = (cluster: Position[]): Position => {
   const ranked = [...cluster].sort((a, b) => {
     if (Boolean(a.chain) !== Boolean(b.chain)) return a.chain ? -1 : 1;
+    // A manual holding was named by the user, so it describes the row better than an exchange ticker.
+    if (Boolean(a.manual) !== Boolean(b.manual)) return a.manual ? -1 : 1;
 
     const byLogo = Number(Boolean(b.logoUrl)) - Number(Boolean(a.logoUrl));
     if (byLogo !== 0) return byLogo;
@@ -470,17 +557,18 @@ const pickPrimaryPosition = (cluster: Position[]): Position => {
 const resolveOverrideKey = (coingeckoId: string | undefined, primary: Position): string => {
   if (coingeckoId) return `coin:${coingeckoId}`;
   if (primary.chain) return tokenOverrideKey(primary.chain.chainId, primary.chain.token);
+  if (primary.manual) return `manual:${primary.manual.balanceId}`;
   return exchangeAssetOverrideKey(primary.exchange?.asset ?? primary.symbol);
 };
 
 // Every key this position could have been hidden under before it had a stable identity: one per contract it
 // is deployed as, and one per ticker it trades under.
 const collectSupersededOverrideKeys = (cluster: Position[], overrideKey: string): string[] => {
-  const keys = cluster.map((position) =>
-    position.chain
-      ? tokenOverrideKey(position.chain.chainId, position.chain.token)
-      : exchangeAssetOverrideKey(position.exchange?.asset ?? position.symbol),
-  );
+  const keys = cluster.map((position) => {
+    if (position.chain) return tokenOverrideKey(position.chain.chainId, position.chain.token);
+    if (position.manual) return `manual:${position.manual.balanceId}`;
+    return exchangeAssetOverrideKey(position.exchange?.asset ?? position.symbol);
+  });
 
   return [...new Set(keys)].filter((key) => key !== overrideKey);
 };
@@ -620,10 +708,11 @@ export const calculateTotals = (
 
   const tokensUsd = visibleTokens.reduce((total, token) => total + token.chainValueUsd, 0);
   const exchangesUsd = visibleTokens.reduce((total, token) => total + token.exchangeValueUsd, 0);
+  const manualUsd = visibleTokens.reduce((total, token) => total + token.manualValueUsd, 0);
 
   const nftsUsd = nftCollections
     .filter((collection) => !collection.isHidden)
     .reduce((total, collection) => total + (collection.valueUsd ?? 0), 0);
 
-  return { tokensUsd, nftsUsd, exchangesUsd, totalUsd: tokensUsd + nftsUsd + exchangesUsd };
+  return { tokensUsd, nftsUsd, exchangesUsd, manualUsd, totalUsd: tokensUsd + nftsUsd + exchangesUsd + manualUsd };
 };

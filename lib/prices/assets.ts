@@ -26,6 +26,10 @@ const MARKET_PAGE_SIZE = 250;
 export interface StoredAssetMap {
   // Lowercase ticker to CoinGecko coin id.
   symbols: Record<string, string>;
+  // Lowercase coin name to CoinGecko coin id. This is what lets a manual balance's location be given an
+  // icon: someone holding coins on "Bitcoin Cash" named a chain whose native coin is called exactly that,
+  // so the name is the link between a place the app knows nothing about and a picture of it.
+  names: Record<string, string>;
   // CoinGecko coin id to icon URL.
   logos: Record<string, string>;
   updatedAt: number;
@@ -56,7 +60,9 @@ export const refreshAssetMap = async (): Promise<void> => {
 const getAssetMap = async (): Promise<StoredAssetMap> => {
   const stored = (await db.settings.get(ASSET_MAP_SETTING_KEY))?.value as StoredAssetMap | undefined;
 
-  if (stored && Date.now() - stored.updatedAt < ASSET_MAP_MAX_AGE) {
+  // A map stored before it carried names is treated as stale rather than as usable, so the new lookup fills
+  // itself in on next use instead of waiting out the day the old copy still had left.
+  if (stored?.names && Date.now() - stored.updatedAt < ASSET_MAP_MAX_AGE) {
     return stored;
   }
 
@@ -64,15 +70,16 @@ const getAssetMap = async (): Promise<StoredAssetMap> => {
 
   // A failed refresh falls back to whatever we already had. Stale mappings are still correct, since an
   // asset's CoinGecko id does not change.
-  if (!fetched) return stored ?? { symbols: {}, logos: {}, updatedAt: 0 };
+  if (!fetched) return stored ?? { symbols: {}, names: {}, logos: {}, updatedAt: 0 };
 
   const value: StoredAssetMap = { ...fetched, updatedAt: Date.now() };
   await db.settings.put({ key: ASSET_MAP_SETTING_KEY, value });
   return value;
 };
 
-const fetchAssetMap = async (): Promise<Pick<StoredAssetMap, 'symbols' | 'logos'>> => {
+const fetchAssetMap = async (): Promise<Pick<StoredAssetMap, 'symbols' | 'names' | 'logos'>> => {
   const symbols: Record<string, string> = {};
+  const names: Record<string, string> = {};
   const logos: Record<string, string> = {};
 
   for (let page = 1; page <= MARKET_PAGES; page += 1) {
@@ -87,16 +94,19 @@ const fetchAssetMap = async (): Promise<Pick<StoredAssetMap, 'symbols' | 'logos'
       const logoUrl = toAbsoluteCoinGeckoImageUrl(entry.image);
       if (logoUrl) logos[entry.id] = logoUrl;
 
+      // Pages arrive in descending market cap order, so the first id seen for a name or symbol is the right
+      // one and later collisions are ignored.
+      const name = entry.name?.toLowerCase();
+      if (name && !names[name]) names[name] = entry.id;
+
       const symbol = entry.symbol?.toLowerCase();
       if (!symbol) continue;
 
-      // Pages arrive in descending market cap order, so the first id seen for a symbol is the right one and
-      // later collisions are ignored.
       if (!symbols[symbol]) symbols[symbol] = entry.id;
     }
 
     if (entries.length < MARKET_PAGE_SIZE) break;
   }
 
-  return { symbols, logos };
+  return { symbols, names, logos };
 };

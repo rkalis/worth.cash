@@ -1,5 +1,6 @@
 'use client';
 
+import ManualLocationLogo from 'components/manual/ManualLocationLogo';
 import Badge from 'components/ui/Badge';
 import ChainLogo from 'components/ui/ChainLogo';
 import ExchangeLogo from 'components/ui/ExchangeLogo';
@@ -85,8 +86,10 @@ const TokenRow = ({ token, totalValueUsd }: Props) => {
                 <div className="flex items-center gap-2 pl-8 min-w-0">
                   {location.kind === 'chain' ? (
                     <ChainLogo chainId={location.chainId} size={14} />
-                  ) : (
+                  ) : location.kind === 'exchange' ? (
                     <ExchangeLogo exchange={location.exchange} size={14} />
+                  ) : (
+                    <ManualLocationLogo location={location.name} size={14} />
                   )}
                   <span className="text-xs text-zinc-600 dark:text-zinc-400 shrink-0">{location.name}</span>
                   {/* A chain can hold the same asset under more than one contract, native and bridged USDC
@@ -114,13 +117,18 @@ const TokenRow = ({ token, totalValueUsd }: Props) => {
   );
 };
 
-// Named for what the row actually spans. "3 chains" was true when a chain was the only kind of place an
-// asset could be, and calling an exchange account a chain now would just be wrong.
 const describeLocations = (locations: TokenLocation[]): string => {
-  const chainCount = locations.filter((location) => location.kind === 'chain').length;
+  const kinds = new Set(locations.map((location) => location.kind));
 
-  if (chainCount === locations.length) return `${chainCount} chains`;
-  if (chainCount === 0) return `${locations.length} exchanges`;
+  // Named for what the row actually spans, and only when every location agrees. "3 chains" was true when a
+  // chain was the only kind of place an asset could be; calling an exchange account or a hand-entered
+  // holding a chain would just be wrong.
+  if (kinds.size === 1) {
+    const [kind] = [...kinds];
+    if (kind === 'chain') return `${locations.length} chains`;
+    if (kind === 'exchange') return `${locations.length} exchanges`;
+  }
+
   return `${locations.length} locations`;
 };
 

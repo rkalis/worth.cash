@@ -12,6 +12,7 @@ import {
 import {
   type BreakdownEntry,
   buildExchangeBreakdown,
+  buildManualBreakdown,
   buildNftChainBreakdown,
   buildTokenChainBreakdown,
 } from 'lib/portfolio/breakdown';
@@ -31,10 +32,11 @@ export interface Portfolio {
   tokenChainBreakdown: BreakdownEntry[];
   nftChainBreakdown: BreakdownEntry[];
   exchangeBreakdown: BreakdownEntry[];
+  manualBreakdown: BreakdownEntry[];
   isLoading: boolean;
 }
 
-const EMPTY_TOTALS: PortfolioTotals = { tokensUsd: 0, nftsUsd: 0, exchangesUsd: 0, totalUsd: 0 };
+const EMPTY_TOTALS: PortfolioTotals = { tokensUsd: 0, nftsUsd: 0, exchangesUsd: 0, manualUsd: 0, totalUsd: 0 };
 
 // Reads everything the portfolio is derived from and aggregates it.
 //
@@ -61,6 +63,7 @@ export const usePortfolio = (): Portfolio => {
         tokenChainBreakdown: [],
         nftChainBreakdown: [],
         exchangeBreakdown: [],
+        manualBreakdown: [],
         isLoading: true,
       };
     }
@@ -84,6 +87,7 @@ export const usePortfolio = (): Portfolio => {
       tokenChainBreakdown: buildTokenChainBreakdown(visibleTokens),
       nftChainBreakdown: buildNftChainBreakdown(visibleNftCollections),
       exchangeBreakdown: buildExchangeBreakdown(visibleTokens),
+      manualBreakdown: buildManualBreakdown(visibleTokens),
       isLoading: false,
     };
   }, [source]);

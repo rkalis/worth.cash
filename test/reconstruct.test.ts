@@ -30,6 +30,8 @@ vi.mock('lib/db', () => ({
     wallets: { where: () => ({ equals: () => ({ toArray: async () => [] }) }) },
     nftCollections: { toArray: async () => [], bulkGet: async () => [] },
     snapshots: { put: vi.fn() },
+    manualBalances: { where: () => ({ equals: () => ({ toArray: async () => [] }) }) },
+    manualLedger: { toArray: async () => [] },
     settings: { get: async () => undefined },
   },
 }));

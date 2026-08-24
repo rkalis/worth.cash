@@ -182,7 +182,7 @@ export interface SnapshotPosition {
   amount: number;
   priceUsd: number | null;
   valueUsd: number;
-  kind: 'token' | 'nft' | 'exchange';
+  kind: 'token' | 'nft' | 'exchange' | 'manual';
 }
 
 export interface StoredSnapshot {
@@ -217,6 +217,44 @@ export interface StoredExchangeLedgerEntry {
   amount: string;
   timestamp: number;
   type: string;
+}
+
+// A holding the app cannot discover for itself: a Bitcoin or Solana balance, a hardware wallet, anything on
+// a chain that is not supported. The user says what it is, where it is, and how to price it.
+//
+// The amount is deliberately not stored here. It is summed from the ledger below, so that the balance and
+// the history telling you how it got there can never disagree.
+export interface StoredManualBalance {
+  id: string;
+  // What the holding is called in the portfolio, e.g. BTC. Uppercased, since it is matched and displayed
+  // the same way exchange tickers are.
+  symbol: string;
+  // The chain or exchange it is on: "Bitcoin", "Solana", "Kraken". Free text rather than a chain id, because
+  // the holdings that need recording by hand are exactly the ones on networks the app does not support.
+  location: string;
+  // Which wallet within that location, when it matters: "Ledger", "Phantom", "cold storage". Optional, since
+  // an exchange balance or a single-wallet chain has nothing useful to put here.
+  wallet?: string;
+  // The CoinGecko coin id to price it by, which is the same identity the rest of the portfolio aggregates
+  // on: give a manual BTC holding `bitcoin` and it joins the row with the BTC on your exchange. Optional,
+  // because tracking a quantity of something unpriceable is still worth doing.
+  coingeckoId?: string;
+  createdAt: number;
+  enabled: 0 | 1;
+}
+
+// One buy or sell against a manual balance. Together they are the whole history of that holding, which is
+// what lets a reconstructed snapshot know what it was worth at a past moment rather than assuming today's
+// quantity has always been held.
+export interface StoredManualLedgerEntry {
+  id: string;
+  balanceId: string;
+  kind: 'buy' | 'sell';
+  // Always positive; `kind` carries the direction. Stored as a decimal string for the same reason exchange
+  // amounts are: these are human-scale quantities with per-asset precision.
+  amount: string;
+  timestamp: number;
+  note?: string;
 }
 
 export interface StoredTokenOverride {

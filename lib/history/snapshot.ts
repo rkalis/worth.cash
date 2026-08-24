@@ -46,6 +46,7 @@ export const buildTokenPositions = (tokens: ReturnType<typeof aggregateTokens>):
 
     const chainAmount = sumLocationAmounts(token, 'chain');
     const exchangeAmount = sumLocationAmounts(token, 'exchange');
+    const manualAmount = sumLocationAmounts(token, 'manual');
 
     if (chainAmount > 0) {
       positions.push({
@@ -69,10 +70,24 @@ export const buildTokenPositions = (tokens: ReturnType<typeof aggregateTokens>):
       });
     }
 
+    if (manualAmount > 0) {
+      positions.push({
+        priceKey: token.key,
+        symbol: token.symbol,
+        amount: manualAmount,
+        priceUsd: token.priceUsd,
+        valueUsd: token.manualValueUsd,
+        kind: 'manual',
+      });
+    }
+
     return positions;
   });
 
-const sumLocationAmounts = (token: ReturnType<typeof aggregateTokens>[number], kind: 'chain' | 'exchange'): number =>
+const sumLocationAmounts = (
+  token: ReturnType<typeof aggregateTokens>[number],
+  kind: 'chain' | 'exchange' | 'manual',
+): number =>
   token.locations.filter((location) => location.kind === kind).reduce((total, location) => total + location.amount, 0);
 
 export const buildNftPositions = (collections: ReturnType<typeof aggregateNftCollections>): SnapshotPosition[] =>
@@ -109,3 +124,9 @@ export const snapshotTimestampFromUtcInput = (date: string, time: string): numbe
 
 // The value a `type="date"` input expects, for a moment expressed in UTC.
 export const toUtcDateInputValue = (timestamp: number): string => new Date(timestamp).toISOString().slice(0, 10);
+
+// The current UTC time of day, for a field that means "when did this happen" rather than "which moment do I
+// want measured". Defaulting a ledger entry to 09:00 would date it in the future for anyone filling the
+// form before then, and a future-dated entry counts towards nothing.
+export const currentUtcTimeInput = (timestamp: number = Date.now()): string =>
+  new Date(timestamp).toISOString().slice(11, 16);

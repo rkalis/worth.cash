@@ -38,7 +38,7 @@ const buildExchangeLocation = (
 });
 
 const buildToken = (locations: Array<TokenChainLocation | TokenExchangeLocation>): AggregatedToken => {
-  const sumFor = (kind: 'chain' | 'exchange') =>
+  const sumFor = (kind: 'chain' | 'exchange' | 'manual') =>
     locations
       .filter((location) => location.kind === kind)
       .reduce((total, location) => total + (location.valueUsd ?? 0), 0);
@@ -54,6 +54,7 @@ const buildToken = (locations: Array<TokenChainLocation | TokenExchangeLocation>
     locations,
     chainValueUsd: sumFor('chain'),
     exchangeValueUsd: sumFor('exchange'),
+    manualValueUsd: sumFor('manual'),
     isSpam: false,
     isHidden: false,
   };

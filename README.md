@@ -16,6 +16,14 @@ database, no account, and nothing is uploaded anywhere except to the APIs whose 
   exchange value separately, since a row can now span both.
 - **Cash held on an exchange** is valued too, from the same reference rates the display currency uses,
   instead of showing up as an unpriced row and being filtered away with the spam.
+- **Manual balances**, on their own page, for anything the app cannot discover: Bitcoin, Solana, a hardware
+  wallet, a chain that is not supported. You give it a symbol, a location and a CoinGecko coin id to price it
+  by, then record the buys and sells with the dates they happened. The balance is derived from that ledger
+  rather than typed in, so a past snapshot values what you actually held at the time instead of assuming
+  today's quantity. Snapshots taken before you recorded a balance can be brought up to date from the History
+  page, which folds the ledger into them at each moment's own price without adding points or touching the
+  on-chain figures those snapshots already hold. Because the price source is a coin id, a manual BTC holding shares a row with the BTC on
+  your exchange, listed as another location beside it.
 - **NFTs**, grouped by collection, with artwork and floor prices from CoinGecko first and OpenSea for the
   long tail. The portfolio page carries a condensed collection table; the NFTs page has the full view with
   per-item artwork.

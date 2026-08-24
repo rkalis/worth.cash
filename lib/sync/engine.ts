@@ -41,38 +41,41 @@ export const runSync = async (options: SyncOptions = {}): Promise<void> => {
   const wallets = await db.wallets.where('enabled').equals(1).toArray();
   const owners = options.owners ?? (wallets.map((wallet) => wallet.address) as Address[]);
 
-  if (owners.length === 0) {
-    useSyncProgress.getState().beginRun([]);
-    useSyncProgress.getState().finishRun();
-    return;
-  }
-
   const chainIds = options.chainIds ?? getEnabledChainIds(settings.sync.enabledChainIds, settings.sync.includeTestnets);
 
+  // A portfolio does not have to contain a wallet. Someone tracking only Bitcoin through a manual balance,
+  // or only an exchange account, still needs a sync to fetch prices and record a point in their history,
+  // so the chain work is skipped rather than the whole run being abandoned.
   const tasks = owners.flatMap((owner) => chainIds.map((chainId) => ({ chainId, owner })));
 
   const progress = useSyncProgress.getState();
   progress.beginRun(tasks);
 
   try {
-    // Fetched before any chain work starts. It is what every token's identity depends on, and fetching it
-    // later would put it behind a queue of price lookups on a rate limit it cannot win.
-    progress.setCoinIdMapAvailable(await primeContractCoinIdMap().catch(() => false));
+    if (tasks.length > 0) {
+      // Fetched before any chain work starts. It is what every token's identity depends on, and fetching it
+      // later would put it behind a queue of price lookups on a rate limit it cannot win.
+      progress.setCoinIdMapAvailable(await primeContractCoinIdMap().catch(() => false));
 
-    // Market data for the top few hundred coins, which carries the only icons available for assets held on
-    // an exchange, where there is no contract to look up. Refreshed even when no exchange is configured,
-    // since the same icons stand in for on-chain tokens the whois dataset has never seen.
-    await refreshAssetMap().catch(() => undefined);
+      // Market data for the top few hundred coins, which carries the only icons available for assets held on
+      // an exchange, where there is no contract to look up. Refreshed even when no exchange is configured,
+      // since the same icons stand in for on-chain tokens the whois dataset has never seen.
+      await refreshAssetMap().catch(() => undefined);
 
-    await mapAsyncBounded(tasks, settings.sync.chainConcurrency, (task) =>
-      syncChainForOwner(task.chainId, task.owner, settings.sync.skipInactiveChains),
-    );
+      await mapAsyncBounded(tasks, settings.sync.chainConcurrency, (task) =>
+        syncChainForOwner(task.chainId, task.owner, settings.sync.skipInactiveChains),
+      );
 
-    await syncPricesForHoldings(chainIds);
+      await syncPricesForHoldings(chainIds);
+    }
 
     if (options.includeExchanges !== false) {
       await syncExchanges(options.includeExchangeLedger === true);
     }
+
+    // Manual holdings are priced by coin id like anything else, but nothing discovers them: they exist only
+    // because the user typed them in, so their ids have to be gathered explicitly.
+    await syncManualBalancePrices().catch(() => undefined);
 
     // Where the portfolio ended up, recorded as a point in its history.
     //
@@ -195,6 +198,17 @@ const syncPricesForHoldings = async (chainIds: number[]): Promise<void> => {
       await fetchOnChainPrices(chainId, unlistedTokens).catch(() => undefined);
     }),
   );
+};
+
+const syncManualBalancePrices = async (): Promise<void> => {
+  const balances = await db.manualBalances.where('enabled').equals(1).toArray();
+  const coingeckoIds = deduplicateArray(
+    balances.map((balance) => balance.coingeckoId).filter((coingeckoId) => Boolean(coingeckoId)),
+  ) as string[];
+
+  if (coingeckoIds.length === 0) return;
+
+  await fetchCoinGeckoIdPrices(coingeckoIds);
 };
 
 const syncExchanges = async (includeLedger: boolean): Promise<void> => {

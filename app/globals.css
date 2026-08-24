@@ -1,0 +1,99 @@
+@import "tailwindcss";
+
+/* Dark mode is driven by a class on <html> rather than by the media query, so the theme toggle can
+   override the system preference. */
+@custom-variant dark (&:where(.dark, .dark *));
+
+@theme {
+  /* Matches the revoke.cash brand colour, so the two apps read as a set. */
+  --color-brand: #fdb952;
+  --color-brand-muted: #f5a623;
+
+  --font-sans:
+    system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Oxygen, Ubuntu, Cantarell, "Fira Sans",
+    "Droid Sans", "Helvetica Neue", sans-serif;
+  --font-mono: ui-monospace, "SF Mono", Menlo, Monaco, Consolas, "Courier New", monospace;
+
+  --ease-expo-out: cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+@layer base {
+  *,
+  ::after,
+  ::before,
+  ::backdrop,
+  ::file-selector-button {
+    border-color: var(--color-zinc-200, currentColor);
+    /* Firefox needs this spelled out, or borders do not render. */
+    --tw-border-style: solid;
+  }
+
+  .dark *,
+  .dark ::after,
+  .dark ::before,
+  .dark ::backdrop,
+  .dark ::file-selector-button {
+    border-color: var(--color-zinc-800, currentColor);
+  }
+
+  body {
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+    @apply bg-white text-zinc-900 leading-tight;
+    @apply dark:bg-black dark:text-zinc-100;
+  }
+
+  h1 {
+    @apply text-3xl md:text-4xl font-semibold tracking-tight m-0;
+  }
+
+  h2 {
+    @apply text-xl font-semibold m-0;
+  }
+
+  h3 {
+    @apply text-base font-semibold m-0;
+  }
+
+  a {
+    color: inherit;
+    text-decoration: none;
+  }
+
+  button:not(:disabled),
+  [role="button"]:not(:disabled) {
+    cursor: pointer;
+  }
+}
+
+/* Numeric columns line up only when every digit occupies the same width. */
+.tabular {
+  font-variant-numeric: tabular-nums;
+}
+
+@keyframes spin {
+  from {
+    transform: rotate(0deg);
+  }
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  ::before,
+  ::after {
+    animation-duration: 0.01ms !important;
+    animation-delay: 0ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+
+  /* A frozen spinner reads as a hung app, so loading indicators keep moving. */
+  .animate-spin {
+    animation-duration: 1.5s !important;
+    animation-iteration-count: infinite !important;
+  }
+}

@@ -1,0 +1,55 @@
+{
+  "name": "portfolio-tracker",
+  "description": "Self-hosted crypto portfolio tracker: multichain EVM token and NFT balances plus exchange holdings, stored locally in IndexedDB.",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "NODE_OPTIONS=--max-old-space-size=8192 next dev",
+    "build": "next build",
+    "start": "next start",
+    "typecheck": "tsc --noEmit",
+    "lint": "biome check .",
+    "lint:fix": "biome check . --write",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "@envio-dev/hypersync-client": "^1.4.0",
+    "@revoke.cash/chains": "^80.0.0",
+    "@tanstack/react-query": "^5.101.4",
+    "clsx": "^2.1.1",
+    "dexie": "^4.4.4",
+    "dexie-react-hooks": "^4.4.0",
+    "ky": "^2.0.2",
+    "next": "^16.3.0",
+    "p-queue": "^9.3.3",
+    "react": "^19.2.8",
+    "react-dom": "^19.2.8",
+    "react-is": "^19.2.8",
+    "recharts": "^3.7.0",
+    "tailwind-merge": "^3.6.0",
+    "viem": "^2.55.13",
+    "zod": "^4.4.3",
+    "zustand": "^5.0.14"
+  },
+  "devDependencies": {
+    "@biomejs/biome": "^2.5.8",
+    "@tailwindcss/postcss": "^4.3.3",
+    "@testing-library/dom": "^10.4.1",
+    "@testing-library/react": "^16",
+    "@types/jsdom": "^30",
+    "@types/node": "^22.20.1",
+    "@types/react": "^19.2.18",
+    "@types/react-dom": "^19.2.4",
+    "@types/react-is": "^19",
+    "jsdom": "^30.0.1",
+    "postcss": "^8.5.26",
+    "tailwindcss": "4.3.3",
+    "typescript": "^6.0.3",
+    "vitest": "^4.0.0"
+  },
+  "packageManager": "yarn@4.17.1",
+  "engines": {
+    "node": ">=22"
+  }
+}

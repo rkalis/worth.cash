@@ -1,0 +1,37 @@
+import Navigation from 'components/layout/Navigation';
+import type { Metadata } from 'next';
+import type { ReactNode } from 'react';
+import Providers from './providers';
+import './globals.css';
+
+export const metadata: Metadata = {
+  title: 'Portfolio Tracker',
+  description: 'Self-hosted multichain crypto portfolio tracker. All data stays in your browser.',
+};
+
+// Applies the saved theme before first paint. Doing this in an effect instead would show a flash of the
+// wrong theme on every page load.
+const THEME_BOOT_SCRIPT = `
+try {
+  var stored = localStorage.getItem('portfolio-tracker-theme');
+  var prefersDark = window.matchMedia('(prefers-color-scheme: dark)').matches;
+  if (stored === 'dark' || (!stored && prefersDark)) document.documentElement.classList.add('dark');
+} catch (error) {}
+`;
+
+const RootLayout = ({ children }: { children: ReactNode }) => (
+  <html lang="en" suppressHydrationWarning>
+    <head>
+      {/* biome-ignore lint/security/noDangerouslySetInnerHtml: a static string that must run before paint */}
+      <script dangerouslySetInnerHTML={{ __html: THEME_BOOT_SCRIPT }} />
+    </head>
+    <body className="min-h-screen">
+      <Providers>
+        <Navigation />
+        <main className="max-w-6xl mx-auto px-4 py-6">{children}</main>
+      </Providers>
+    </body>
+  </html>
+);
+
+export default RootLayout;

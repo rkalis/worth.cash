@@ -1,6 +1,7 @@
 import { db } from 'lib/db';
 import { coingeckoPriceKey } from 'lib/db/keys';
 import type { SnapshotPosition, StoredSnapshot } from 'lib/db/schema';
+import { loadSettings } from 'lib/db/settings';
 import { amountAt, groupEntriesByBalance } from 'lib/manual/balances';
 import {
   fetchHistoricalSeriesForCoin,
@@ -61,6 +62,7 @@ export const reprocessManualBalances = async (
 
   // Disabled balances are left out, exactly as they are everywhere else that counts money. Their ledgers
   // stay untouched, so re-enabling one and running this again brings it back.
+  const { spam } = await loadSettings();
   const balances = await db.manualBalances.where('enabled').equals(1).toArray();
   const entriesByBalance = groupEntriesByBalance(await db.manualLedger.toArray());
 
@@ -78,7 +80,7 @@ export const reprocessManualBalances = async (
 
     for (const balance of balances) {
       const amount = amountAt(entriesByBalance.get(balance.id) ?? [], snapshot.timestamp);
-      if (amount <= 0) continue;
+      if (amount < spam.dustThresholdAmount) continue;
 
       const series = balance.coingeckoId ? seriesByCoinId.get(balance.coingeckoId) : undefined;
       const priceUsd = series ? priceAt(series, snapshot.timestamp) : null;

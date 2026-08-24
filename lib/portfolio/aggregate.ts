@@ -4,6 +4,7 @@ import { coingeckoPriceKey, exchangeAssetOverrideKey, onChainPriceKey, tokenOver
 import type {
   ExchangeKind,
   StoredBalance,
+  StoredCategoryAssignment,
   StoredExchangeAccount,
   StoredExchangeBalance,
   StoredNftCollection,
@@ -84,6 +85,9 @@ export interface AggregatedToken {
   exchangeValueUsd: number;
   manualValueUsd: number;
   isSpam: boolean;
+  // The category the user filed this asset under, if any. Resolved through the same keys a hide decision
+  // uses, so filing an asset survives its coin id appearing or disappearing.
+  categoryId?: string;
   // Whether this position is hidden from the main list, and why. Hidden positions are still returned so the
   // UI can show them in a collapsible section rather than making them vanish.
   isHidden: boolean;
@@ -99,6 +103,8 @@ export interface AggregatedNftCollection {
   imageUrl?: string;
   openseaSlug?: string;
   itemCount: number;
+  // Collections are filed by their own key, since a collection has no coin id to be identified by.
+  categoryId?: string;
   floorPriceUsd: number | null;
   // Hidden by the same rules as tokens: no price available, or a value below the dust threshold. Hidden
   // collections still appear behind the "show filtered" toggle and count towards nothing.
@@ -136,6 +142,8 @@ export interface AggregationInput {
   coinLogoUrls?: Record<string, string>;
   // Units of each currency per US dollar, used to value cash held on an exchange.
   fiatRatesPerUsd?: Record<string, number>;
+  // Which category the user filed each asset under, keyed by the same identity a hide decision uses.
+  categoryAssignments?: StoredCategoryAssignment[];
   spamSettings: SpamSettings;
 }
 
@@ -152,6 +160,7 @@ export interface AggregationInput {
 export const aggregateTokens = (input: AggregationInput): AggregatedToken[] => {
   const pricesById = new Map(input.prices.map((price) => [price.id, price.priceUsd]));
   const overridesById = new Map(input.overrides.map((override) => [override.id, override.hidden]));
+  const categoriesByKey = buildCategoryLookup(input.categoryAssignments);
 
   const positions = [
     ...buildChainPositions(input, pricesById),
@@ -170,7 +179,9 @@ export const aggregateTokens = (input: AggregationInput): AggregatedToken[] => {
     }
   }
 
-  const aggregated = [...groups.values()].map((cluster) => buildAggregatedToken(cluster, input, overridesById));
+  const aggregated = [...groups.values()].map((cluster) =>
+    buildAggregatedToken(cluster, input, overridesById, categoriesByKey),
+  );
 
   return aggregated.sort((a, b) => (b.valueUsd ?? 0) - (a.valueUsd ?? 0));
 };
@@ -193,6 +204,14 @@ interface Position {
   exchange?: { accountId: string; accountLabel: string; exchange: ExchangeKind; asset: string };
   manual?: { balanceId: string; location: string; wallet?: string };
 }
+
+// Whether there is really anything held, as opposed to a residue.
+//
+// Summing decimal strings through Number leaves a few atoms behind when a ledger nets to exactly zero, and
+// a token contract can report a balance of one wei of something worthless. Neither is a holding, and both
+// would otherwise take up a row and a line in a breakdown.
+const isRealAmount = (amount: number, spamSettings: SpamSettings): boolean =>
+  Number.isFinite(amount) && amount >= spamSettings.dustThresholdAmount && amount > 0;
 
 const buildChainPositions = (input: AggregationInput, pricesById: Map<string, number | null>): Position[] => {
   const tokensById = new Map(input.tokens.map((token) => [token.id, token]));
@@ -222,7 +241,7 @@ const buildChainPositions = (input: AggregationInput, pricesById: Map<string, nu
     if (isNullish(decimals)) return [];
 
     const amount = Number(formatUnits(holding.amount, decimals));
-    if (!Number.isFinite(amount) || amount === 0) return [];
+    if (!isRealAmount(amount, input.spamSettings)) return [];
 
     const chain = getChainConfig(holding.chainId as never);
     const coingeckoId = resolveCoingeckoId(holding, token);
@@ -254,7 +273,7 @@ const buildExchangePositions = (input: AggregationInput, pricesById: Map<string,
 
   return input.exchangeBalances.flatMap((balance) => {
     const amount = Number(balance.amount);
-    if (!Number.isFinite(amount) || amount <= 0) return [];
+    if (!isRealAmount(amount, input.spamSettings)) return [];
 
     const asset = balance.asset.toUpperCase();
     const account = accountsById.get(balance.accountId);
@@ -295,10 +314,6 @@ const buildExchangePositions = (input: AggregationInput, pricesById: Map<string,
   });
 };
 
-// Below this a manual holding is float residue rather than a quantity. Chosen well under any real holding:
-// even a satoshi is 1e-8.
-const MINIMUM_MANUAL_AMOUNT = 1e-12;
-
 // Manual holdings price exactly like an exchange holding: by coin id, which is also what merges them into
 // the same row as an on-chain or exchange balance of the same asset. One without a coin id keeps an identity
 // of its own and can never merge with anything.
@@ -306,9 +321,7 @@ const buildManualPositions = (input: AggregationInput, pricesById: Map<string, n
   (input.manualHoldings ?? []).flatMap((holding) => {
     const { balance, amount } = holding;
 
-    // Summing decimal strings through Number can leave a few atoms behind when a ledger nets to exactly
-    // zero, and a residue of 1e-17 would render as a $0.00 Manual tile for a holding that was fully sold.
-    if (!Number.isFinite(amount) || amount < MINIMUM_MANUAL_AMOUNT) return [];
+    if (!isRealAmount(amount, input.spamSettings)) return [];
 
     const coingeckoId = balance.coingeckoId;
 
@@ -331,6 +344,7 @@ const buildAggregatedToken = (
   cluster: Position[],
   input: AggregationInput,
   overridesById: Map<string, 0 | 1>,
+  categoriesByKey: Map<string, string>,
 ): AggregatedToken => {
   // Every member of a group is the same asset by construction, so they share one price. Crucially this is
   // only ever a price the group's own identity resolved to: nothing inherits a price from a sibling, which
@@ -367,6 +381,7 @@ const buildAggregatedToken = (
   return {
     key: overrideKey,
     symbol: primary.symbol,
+    categoryId: resolveCategoryId(categoriesByKey, overrideKey, supersededOverrideKeys),
     logoUrl: primary.logoUrl ?? (coingeckoId ? input.coinLogoUrls?.[coingeckoId] : undefined),
     overrideKey,
     coingeckoId,
@@ -554,6 +569,21 @@ const pickPrimaryPosition = (cluster: Position[]): Position => {
 // A listed coin is keyed by its coin id, which never moves. Everything else keeps the key it has always had:
 // an unlisted token by its contract, an unresolved exchange asset by its ticker. That matters because those
 // are the positions people actually hide, and rekeying them would silently un-hide every one of them.
+const buildCategoryLookup = (assignments: StoredCategoryAssignment[] | undefined): Map<string, string> =>
+  new Map((assignments ?? []).map((assignment) => [assignment.id, assignment.categoryId]));
+
+// Filed under the asset's stable identity, and found again under any key it used to have.
+//
+// Same reasoning as a hide decision: an asset's override key is its coin id when CoinGecko lists it and its
+// contract otherwise, and a metadata refresh can move it between the two. Reading through the superseded
+// keys as well means filing something under "stablecoins" survives that move rather than silently
+// unfiling it.
+const resolveCategoryId = (
+  categoriesByKey: Map<string, string>,
+  overrideKey: string,
+  supersededOverrideKeys: string[],
+): string | undefined => [overrideKey, ...supersededOverrideKeys].map((key) => categoriesByKey.get(key)).find(Boolean);
+
 const resolveOverrideKey = (coingeckoId: string | undefined, primary: Position): string => {
   if (coingeckoId) return `coin:${coingeckoId}`;
   if (primary.chain) return tokenOverrideKey(primary.chain.chainId, primary.chain.token);
@@ -644,6 +674,7 @@ const resolveHiddenState = (input: HiddenStateInput): { isHidden: boolean; hidde
 // chains is deliberately two entries rather than one.
 export const aggregateNftCollections = (input: AggregationInput): AggregatedNftCollection[] => {
   const collectionsById = new Map(input.nftCollections.map((collection) => [collection.id, collection]));
+  const categoriesByKey = buildCategoryLookup(input.categoryAssignments);
 
   const itemsByCollection = new Map<string, StoredNftItem[]>();
   for (const item of input.nftItems) {
@@ -671,6 +702,7 @@ export const aggregateNftCollections = (input: AggregationInput): AggregatedNftC
 
     return {
       key,
+      categoryId: categoriesByKey.get(key),
       chainId: items[0].chainId,
       chainName: chain?.getName() ?? `Chain ${items[0].chainId}`,
       address: items[0].collection,

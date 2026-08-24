@@ -1,6 +1,7 @@
 'use client';
 
 import ManualLocationLogo from 'components/manual/ManualLocationLogo';
+import CategorySelect from 'components/portfolio/CategorySelect';
 import Badge from 'components/ui/Badge';
 import ChainLogo from 'components/ui/ChainLogo';
 import ExchangeLogo from 'components/ui/ExchangeLogo';
@@ -15,9 +16,11 @@ import { useState } from 'react';
 interface Props {
   token: AggregatedToken;
   totalValueUsd: number;
+  // Decided by the table rather than here, so that the header and every row agree on the column count.
+  showCategory?: boolean;
 }
 
-const TokenRow = ({ token, totalValueUsd }: Props) => {
+const TokenRow = ({ token, totalValueUsd, showCategory }: Props) => {
   const [isExpanded, setIsExpanded] = useState(false);
   const { setPositionHidden } = useTokenOverrides();
   const { formatValue, formatPrice } = useCurrency();
@@ -59,6 +62,16 @@ const TokenRow = ({ token, totalValueUsd }: Props) => {
         <td className="py-2.5 px-2 text-right text-sm tabular text-zinc-500 dark:text-zinc-400">
           {formatShare(share)}
         </td>
+
+        {showCategory ? (
+          <td className="py-2.5 px-2 hidden md:table-cell">
+            <CategorySelect
+              assetKeys={[token.overrideKey, ...token.supersededOverrideKeys]}
+              categoryId={token.categoryId}
+              label={token.symbol}
+            />
+          </td>
+        ) : null}
 
         <td className="py-2.5 pr-4 pl-2 text-right w-8">
           <button
@@ -108,6 +121,7 @@ const TokenRow = ({ token, totalValueUsd }: Props) => {
               <td className="py-1.5 px-2 text-right text-xs tabular text-zinc-600 dark:text-zinc-400">
                 {formatValue(location.valueUsd)}
               </td>
+              {showCategory ? <td className="hidden md:table-cell" /> : null}
               <td />
               <td />
             </tr>

@@ -1,6 +1,7 @@
 'use client';
 
 import { formatDateShort } from 'lib/format';
+import { buildValueAxis } from 'lib/history/axis';
 import { useCurrency } from 'lib/hooks/useCurrency';
 import type { SnapshotPoint } from 'lib/hooks/useSnapshots';
 import { Area, AreaChart, CartesianGrid, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts';
@@ -11,7 +12,12 @@ interface Props {
 }
 
 const ValueChart = ({ points, height = 240 }: Props) => {
-  const { formatValue, formatCompactValue } = useCurrency();
+  const { display, formatValue, formatCompactValue } = useCurrency();
+
+  const axis = buildValueAxis(
+    points.map((point) => point.totalUsd),
+    display.rate,
+  );
 
   if (points.length < 2) {
     return (
@@ -41,6 +47,12 @@ const ValueChart = ({ points, height = 240 }: Props) => {
 
           <XAxis
             dataKey="timestamp"
+            // Positioned by when each snapshot was taken, not by how many came before it. Snapshots land
+            // whenever you sync, so spacing them evenly draws a month-long gap the same width as an hour
+            // and invents a shape the portfolio never had.
+            type="number"
+            scale="time"
+            domain={['dataMin', 'dataMax']}
             tickFormatter={(timestamp) => formatDateShort(timestamp)}
             tick={{ fontSize: 11 }}
             stroke="currentColor"
@@ -51,11 +63,10 @@ const ValueChart = ({ points, height = 240 }: Props) => {
           />
 
           <YAxis
-            // Fitted to the values in view rather than anchored at zero. Over a short range a portfolio
-            // moves by a few percent, and a zero-based axis flattens that into a straight line at the top
-            // of the chart, which is exactly the shape someone picking "1W" is trying to see. The absolute
-            // figure is never in doubt: it is the headline above the chart.
-            domain={verticalDomain(points)}
+            // Anchored at zero, so the height of the line means what it looks like it means and a 3% week
+            // draws as a 3% week. See lib/history/axis.
+            domain={axis.domain}
+            ticks={axis.ticks}
             tickFormatter={(value) => formatCompactValue(value)}
             tick={{ fontSize: 11 }}
             stroke="currentColor"
@@ -85,22 +96,6 @@ const ValueChart = ({ points, height = 240 }: Props) => {
       </ResponsiveContainer>
     </div>
   );
-};
-
-// Room above and below the line so it is not drawn against the edges of the plot.
-//
-// A flat history has no range to pad, so it falls back to a margin around the value itself; padding zero
-// would collapse the domain to a single number and recharts would have nothing to scale against.
-const verticalDomain = (points: SnapshotPoint[]): [number, number] => {
-  const values = points.map((point) => point.totalUsd);
-  const lowest = Math.min(...values);
-  const highest = Math.max(...values);
-
-  const padding = highest > lowest ? (highest - lowest) * 0.15 : Math.max(highest * 0.05, 1);
-
-  // Never below zero: a portfolio cannot be worth less than nothing, and axis labels saying otherwise
-  // would be nonsense.
-  return [Math.max(0, lowest - padding), highest + padding];
 };
 
 export default ValueChart;

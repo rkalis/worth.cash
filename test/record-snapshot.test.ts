@@ -29,7 +29,12 @@ const buildInput = (overrides: Partial<AggregationInput> = {}): AggregationInput
   exchangeBalances: [],
   exchangeAccounts: [],
   exchangeAssetCoingeckoIds: {},
-  spamSettings: { dustThresholdUsd: 1, hideUnpricedTokens: true, useSpamHeuristics: true },
+  spamSettings: {
+    dustThresholdUsd: 1,
+    dustThresholdAmount: 0.000001,
+    hideUnpricedTokens: true,
+    useSpamHeuristics: true,
+  },
   ...overrides,
 });
 

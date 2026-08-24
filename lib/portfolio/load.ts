@@ -2,6 +2,7 @@ import { createEnabledChainFilter } from 'lib/chains/enabled';
 import { db } from 'lib/db';
 import type {
   StoredBalance,
+  StoredCategoryAssignment,
   StoredExchangeAccount,
   StoredExchangeBalance,
   StoredManualBalance,
@@ -17,7 +18,7 @@ import { FIAT_RATES_SETTING_KEY, type StoredFiatRates } from 'lib/fiat/rates';
 import { buildManualHoldings } from 'lib/manual/balances';
 import type { AggregationInput } from 'lib/portfolio/aggregate';
 import { ASSET_MAP_SETTING_KEY, type StoredAssetMap } from 'lib/prices/assets';
-import { type AppSettings, DEFAULT_SETTINGS } from 'lib/settings/types';
+import { type AppSettings, mergeSettingsWithDefaults } from 'lib/settings/types';
 
 // Everything the portfolio is derived from, straight out of IndexedDB and unfiltered.
 export interface PortfolioSource {
@@ -31,6 +32,7 @@ export interface PortfolioSource {
   exchangeAccounts: StoredExchangeAccount[];
   manualBalances: StoredManualBalance[];
   manualLedger: StoredManualLedgerEntry[];
+  categoryAssignments: StoredCategoryAssignment[];
   settingsRow?: StoredSetting;
   assetMapRow?: StoredSetting;
   fiatRatesRow?: StoredSetting;
@@ -56,6 +58,7 @@ export const loadPortfolioSource = async (): Promise<PortfolioSource> => {
     exchangeAccounts,
     manualBalances,
     manualLedger,
+    categoryAssignments,
     settingsRow,
     assetMapRow,
     fiatRatesRow,
@@ -70,6 +73,7 @@ export const loadPortfolioSource = async (): Promise<PortfolioSource> => {
     db.exchangeAccounts.toArray(),
     db.manualBalances.toArray(),
     db.manualLedger.toArray(),
+    db.categoryAssignments.toArray(),
     db.settings.get(PORTFOLIO_SETTINGS_KEY),
     db.settings.get(ASSET_MAP_SETTING_KEY),
     db.settings.get(FIAT_RATES_SETTING_KEY),
@@ -86,6 +90,7 @@ export const loadPortfolioSource = async (): Promise<PortfolioSource> => {
     exchangeAccounts,
     manualBalances,
     manualLedger,
+    categoryAssignments,
     settingsRow,
     assetMapRow,
     fiatRatesRow,
@@ -95,12 +100,13 @@ export const loadPortfolioSource = async (): Promise<PortfolioSource> => {
 // Applies the user's settings to the raw rows: which chains count, which exchange accounts count, and how
 // tickers and icons are resolved.
 export const buildAggregationInput = (source: PortfolioSource): AggregationInput => {
-  const storedSettings = source.settingsRow?.value as Partial<AppSettings> | undefined;
-  const spamSettings = storedSettings?.spam ?? DEFAULT_SETTINGS.spam;
+  const { spam: spamSettings, sync } = mergeSettingsWithDefaults(
+    source.settingsRow?.value as Partial<AppSettings> | undefined,
+  );
 
   // Disabling a chain hides everything already synced from it, not just future syncs. The rows stay in
   // IndexedDB untouched, so re-enabling the chain brings them straight back with no re-sync.
-  const isChainEnabled = createEnabledChainFilter({ ...DEFAULT_SETTINGS.sync, ...storedSettings?.sync });
+  const isChainEnabled = createEnabledChainFilter(sync);
 
   const assetMap = source.assetMapRow?.value as StoredAssetMap | undefined;
   const symbolMap = assetMap?.symbols ?? {};
@@ -136,6 +142,7 @@ export const buildAggregationInput = (source: PortfolioSource): AggregationInput
     exchangeAccounts,
     exchangeAssetCoingeckoIds,
     manualHoldings,
+    categoryAssignments: source.categoryAssignments,
     coinLogoUrls: assetMap?.logos,
     fiatRatesPerUsd: (source.fiatRatesRow?.value as StoredFiatRates | undefined)?.rates,
     spamSettings,

@@ -1,6 +1,7 @@
 'use client';
 
 import ApiKeysSection from 'components/settings/ApiKeysSection';
+import CategoriesSection from 'components/settings/CategoriesSection';
 import ChainsSection from 'components/settings/ChainsSection';
 import DataSection from 'components/settings/DataSection';
 import DisplaySection from 'components/settings/DisplaySection';
@@ -24,6 +25,7 @@ const SettingsPage = () => (
     <ChainsSection />
     <RpcSection />
     <DisplaySection />
+    <CategoriesSection />
     <FiltersSection />
     <DataSection />
   </div>

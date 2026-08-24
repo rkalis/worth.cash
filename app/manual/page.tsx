@@ -61,11 +61,24 @@ const ManualBalancesPage = () => {
     return prices;
   }, [portfolio.tokens]);
 
-  const valueFor = (holding: (typeof holdings)[number]): number | null => {
-    const price = holding.balance.coingeckoId ? priceByCoinId.get(holding.balance.coingeckoId) : undefined;
+  // Most valuable first, the order the portfolio table is already read in.
+  //
+  // What comes out of the database is primary key order, which for generated ids is no order at all: the
+  // holding worth the most sits wherever it happened to be added. A holding with no price has no value to
+  // be sorted by and goes last rather than being ranked as though it were worth nothing, and those fall
+  // back to their symbol so that a page of them is still in a readable order rather than an arbitrary one.
+  const pricedHoldings = useMemo(() => {
+    const withValue = holdings.map((holding) => {
+      const priceUsd = holding.balance.coingeckoId ? priceByCoinId.get(holding.balance.coingeckoId) : undefined;
 
-    return price === undefined ? null : holding.amount * price;
-  };
+      return { holding, valueUsd: priceUsd === undefined ? null : holding.amount * priceUsd };
+    });
+
+    return withValue.sort(
+      (a, b) =>
+        (b.valueUsd ?? -1) - (a.valueUsd ?? -1) || a.holding.balance.symbol.localeCompare(b.holding.balance.symbol),
+    );
+  }, [holdings, priceByCoinId]);
 
   const submit = async () => {
     setError(undefined);
@@ -175,11 +188,11 @@ const ManualBalancesPage = () => {
         />
       ) : (
         <div className="flex flex-col gap-3">
-          {holdings.map((holding) => (
+          {pricedHoldings.map(({ holding, valueUsd }) => (
             <ManualBalanceRow
               key={holding.balance.id}
               holding={holding}
-              valueUsd={valueFor(holding)}
+              valueUsd={valueUsd}
               logoUrl={holding.balance.coingeckoId ? coinLogos[holding.balance.coingeckoId] : undefined}
               entries={entriesByBalance.get(holding.balance.id) ?? []}
               onUpdate={updateBalance}

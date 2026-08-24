@@ -38,6 +38,11 @@ export interface SpamSettings {
   // Hide positions whose total value is below this many USD. Tokens without a price are hidden by the
   // `hideUnpricedTokens` flag instead, since their value is unknown rather than small.
   dustThresholdUsd: number;
+  // Ignore a holding whose quantity is below this, whatever it might be worth. This is a different question
+  // from the dust threshold above: that one asks whether a holding is worth enough to show, this one asks
+  // whether there is really anything there at all. A few atoms left behind by a rounding error, or the
+  // remainder of a token fully sold, are not holdings.
+  dustThresholdAmount: number;
   hideUnpricedTokens: boolean;
   // Name/symbol heuristics: URLs, "claim"/"reward" bait, unicode lookalikes, broken ERC20 metadata.
   useSpamHeuristics: boolean;
@@ -72,6 +77,7 @@ export const DEFAULT_SETTINGS: AppSettings = {
   },
   spam: {
     dustThresholdUsd: 1,
+    dustThresholdAmount: 0.000001,
     hideUnpricedTokens: true,
     useSpamHeuristics: true,
   },
@@ -80,3 +86,19 @@ export const DEFAULT_SETTINGS: AppSettings = {
     hideBalances: false,
   },
 };
+
+// Fills in whatever a stored settings row is missing.
+//
+// A row written by an earlier version of the app has the fields that existed when it was saved and nothing
+// more, so every read has to be merged against the defaults section by section. Spreading the whole object
+// is not enough: a `spam` written before a field was added is present but incomplete, and a `??` on the
+// section leaves the new field undefined. Reading a settings row anywhere without coming through here is
+// how a newly added setting silently becomes `undefined` in the one place that forgot.
+export const mergeSettingsWithDefaults = (stored: Partial<AppSettings> | undefined): AppSettings => ({
+  apiKeys: { ...DEFAULT_SETTINGS.apiKeys, ...stored?.apiKeys },
+  coingeckoTier: stored?.coingeckoTier ?? DEFAULT_SETTINGS.coingeckoTier,
+  rpcOverrides: { ...DEFAULT_SETTINGS.rpcOverrides, ...stored?.rpcOverrides },
+  sync: { ...DEFAULT_SETTINGS.sync, ...stored?.sync },
+  spam: { ...DEFAULT_SETTINGS.spam, ...stored?.spam },
+  display: { ...DEFAULT_SETTINGS.display, ...stored?.display },
+});

@@ -5,11 +5,27 @@ import type { StoredNftCollection } from 'lib/db/schema';
 import { fetchCoinGeckoNftCollection } from 'lib/nfts/coingecko';
 import { fetchOpenSeaCollection } from 'lib/nfts/opensea';
 import { getApiKey } from 'lib/settings/runtime';
-import { HOUR, WEEK } from 'lib/utils/time';
+import { mapAsyncBounded } from 'lib/utils/promises';
+import { DAY, HOUR, WEEK } from 'lib/utils/time';
 import type { Address } from 'viem';
 
 // Floor prices move slowly enough that hourly is ample, and refreshing one costs at least a request.
 const FLOOR_PRICE_MAX_AGE = 1 * HOUR;
+
+// How long to leave a collection alone when neither source could price it.
+//
+// Most collections in a real wallet have no floor anywhere: no marketplace lists them, or nobody has ever
+// bought one. Re-asking both sources about every one of them every hour is the bulk of what makes this the
+// slowest part of a sync, and the answer almost never changes. A collection that does have a floor still
+// refreshes hourly, because that is the number people actually watch.
+const UNPRICEABLE_RETRY_AGE = 1 * DAY;
+
+// How many collections to price at once.
+//
+// Both sources are rate limited behind their own queues, so this does not overrun either of them; what it
+// buys is overlap. A collection waiting on OpenSea no longer blocks the next one's CoinGecko lookup, which
+// is what made the whole phase run at the speed of the sum of every request.
+const FLOOR_PRICE_CONCURRENCY = 6;
 
 // How long a "CoinGecko does not index this collection" answer is trusted for.
 //
@@ -39,9 +55,15 @@ export const syncFloorPrices = async (chainId: number, collections: Address[]): 
   );
   const staleThreshold = Date.now() - FLOOR_PRICE_MAX_AGE;
 
+  const unpriceableThreshold = Date.now() - UNPRICEABLE_RETRY_AGE;
+
   const staleCollections = collections.filter((_collection, index) => {
     const existing = stored[index];
-    return !existing?.floorPriceUpdatedAt || existing.floorPriceUpdatedAt < staleThreshold;
+    if (!existing?.floorPriceUpdatedAt) return true;
+
+    // A collection nobody could price is asked about far less often than one with a floor to refresh.
+    const threshold = existing.floorPriceUsd === undefined ? unpriceableThreshold : staleThreshold;
+    return existing.floorPriceUpdatedAt < threshold;
   });
 
   if (staleCollections.length === 0) return 0;
@@ -49,28 +71,30 @@ export const syncFloorPrices = async (chainId: number, collections: Address[]): 
   const openSeaApiKey = getApiKey('opensea');
   const hasOpenSeaCoverage = Boolean(openSeaApiKey) && Boolean(getOpenSeaChainSlug(chainId));
 
-  let updatedCount = 0;
+  // The rows are already in hand from the bulkGet above, so each collection is spared another read.
+  const storedByAddress = new Map(
+    stored.filter((collection) => collection !== undefined).map((collection) => [collection.address, collection]),
+  );
 
-  for (const collection of staleCollections) {
-    const updated = await syncCollectionFloorPrice(
+  const results = await mapAsyncBounded(staleCollections, FLOOR_PRICE_CONCURRENCY, (collection) =>
+    syncCollectionFloorPrice(
       chainId,
       collection,
+      storedByAddress.get(collection.toLowerCase()),
       hasOpenSeaCoverage ? openSeaApiKey : undefined,
-    ).catch(() => false);
+    ).catch(() => false),
+  );
 
-    if (updated) updatedCount += 1;
-  }
-
-  return updatedCount;
+  return results.filter(Boolean).length;
 };
 
 const syncCollectionFloorPrice = async (
   chainId: number,
   collection: Address,
+  existing: StoredNftCollection | undefined,
   openSeaApiKey: string | undefined,
 ): Promise<boolean> => {
   const id = nftCollectionKey(chainId, collection);
-  const existing = await db.nftCollections.get(id);
 
   const update: Partial<StoredNftCollection> = { floorPriceUpdatedAt: Date.now() };
 

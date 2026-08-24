@@ -10,6 +10,7 @@ import type {
   StoredToken,
   StoredTransferEvent,
 } from 'lib/db/schema';
+import { loadSettings } from 'lib/db/settings';
 import { resolveBlockAtTimestamp } from 'lib/history/blocks';
 import { type NativeBalanceSeries, readHistoricalNativeBalances } from 'lib/history/native-balances';
 import {
@@ -113,6 +114,11 @@ export const reconstructSnapshotAt = async (
 
   await fetchExchangeHistory(progress, options.includeExchangeHistory === true);
 
+  // The same floor the portfolio applies, so a reconstructed point counts the same holdings the dashboard
+  // would have counted at that moment.
+  const { spam } = await loadSettings();
+  const dustThresholdAmount = spam.dustThresholdAmount;
+
   const events = await db.transferEvents.toArray();
 
   // A disabled exchange account is one the user has said is not part of their portfolio, so its history is
@@ -178,7 +184,7 @@ export const reconstructSnapshotAt = async (
   // synced, otherwise costs a full round of price requests to arrive at a total of nothing.
   const heldAnything =
     [...balanceSeries.values(), ...exchangeSeries.values(), ...manualSeries.values()].some(
-      (series) => series.amounts[0] > 0,
+      (series) => series.amounts[0] >= dustThresholdAmount,
     ) || [...nftSeries.values()].some((series) => series.counts[0] > 0);
 
   if (!heldAnything) {
@@ -192,9 +198,9 @@ export const reconstructSnapshotAt = async (
   // then is dropped when the snapshot is assembled anyway. Fetching its price first was work done purely to
   // throw away, and on a tight CoinGecko rate limit it was the difference between a reconstruction that
   // finishes and one that spends its whole budget on assets worth nothing.
-  const heldBalanceKeys = keysHeldAt(balanceSeries);
-  const heldExchangeKeys = keysHeldAt(exchangeSeries);
-  const heldManualKeys = keysHeldAt(manualSeries);
+  const heldBalanceKeys = keysHeldAt(balanceSeries, dustThresholdAmount);
+  const heldExchangeKeys = keysHeldAt(exchangeSeries, dustThresholdAmount);
+  const heldManualKeys = keysHeldAt(manualSeries, dustThresholdAmount);
   const heldCollectionKeys = [...nftSeries.entries()]
     .filter(([, series]) => series.counts[0] > 0)
     .map(([collectionKey]) => collectionKey);
@@ -226,7 +232,7 @@ export const reconstructSnapshotAt = async (
 
   for (const [priceKey, series] of balanceSeries) {
     const amount = series.amounts[0];
-    if (amount === 0) continue;
+    if (amount < dustThresholdAmount) continue;
 
     const priceUsd = priceAt(priceSeriesByKey.get(priceKey) ?? { priceKey, points: [] }, timestamp);
     positions.push({
@@ -260,7 +266,7 @@ export const reconstructSnapshotAt = async (
 
   for (const [priceKey, series] of exchangeSeries) {
     const amount = series.amounts[0];
-    if (amount === 0) continue;
+    if (amount < dustThresholdAmount) continue;
 
     const priceUsd = priceAt(priceSeriesByKey.get(priceKey) ?? { priceKey, points: [] }, timestamp);
     positions.push({
@@ -275,7 +281,7 @@ export const reconstructSnapshotAt = async (
 
   for (const [priceKey, series] of manualSeries) {
     const amount = series.amounts[0];
-    if (amount === 0) continue;
+    if (amount < dustThresholdAmount) continue;
 
     const priceUsd = priceAt(priceSeriesByKey.get(priceKey) ?? { priceKey, points: [] }, timestamp);
     positions.push({
@@ -531,8 +537,8 @@ const buildExchangeBalanceSeries = (
   return series;
 };
 
-const keysHeldAt = (series: Map<string, BalanceSeries>): string[] =>
-  [...series.entries()].filter(([, entry]) => entry.amounts[0] > 0).map(([priceKey]) => priceKey);
+const keysHeldAt = (series: Map<string, BalanceSeries>, dustThresholdAmount: number): string[] =>
+  [...series.entries()].filter(([, entry]) => entry.amounts[0] >= dustThresholdAmount).map(([priceKey]) => priceKey);
 
 // The price keys we already know CoinGecko has no price for.
 //

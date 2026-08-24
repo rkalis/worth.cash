@@ -29,21 +29,40 @@ const FiltersSection = () => {
         onChange={(checked) => updateSettings({ spam: { ...settings.spam, useSpamHeuristics: checked } })}
       />
 
-      <div className="pt-2 max-w-48">
-        <Input
-          name="dust-threshold"
-          label="Dust threshold (USD)"
-          type="number"
-          min={0}
-          step={0.5}
-          hint="Positions worth less than this are hidden, including NFT collections valued at their floor."
-          value={settings.spam.dustThresholdUsd}
-          onChange={(event) =>
-            updateSettings({
-              spam: { ...settings.spam, dustThresholdUsd: Math.max(0, Number(event.target.value) || 0) },
-            })
-          }
-        />
+      <div className="pt-2 flex flex-wrap gap-4">
+        <div className="max-w-48">
+          <Input
+            name="dust-threshold-amount"
+            label="Minimum balance"
+            type="number"
+            min={0}
+            step={0.000001}
+            hint="Quantities below this are treated as nothing at all, whatever they might be worth. Catches wei-sized remainders and rounding residue."
+            value={settings.spam.dustThresholdAmount}
+            onChange={(event) =>
+              updateSettings({
+                spam: { ...settings.spam, dustThresholdAmount: Math.max(0, Number(event.target.value) || 0) },
+              })
+            }
+          />
+        </div>
+
+        <div className="max-w-48">
+          <Input
+            name="dust-threshold"
+            label="Dust threshold (USD)"
+            type="number"
+            min={0}
+            step={0.5}
+            hint="Positions worth less than this are hidden, including NFT collections valued at their floor."
+            value={settings.spam.dustThresholdUsd}
+            onChange={(event) =>
+              updateSettings({
+                spam: { ...settings.spam, dustThresholdUsd: Math.max(0, Number(event.target.value) || 0) },
+              })
+            }
+          />
+        </div>
       </div>
     </Card>
   );

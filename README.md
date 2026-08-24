@@ -38,7 +38,8 @@ database, no account, and nothing is uploaded anywhere except to the APIs whose 
   which moment it actually used.
 - **A display currency**, US dollars or euro. Prices are always fetched and stored in dollars; another
   currency is converted from that at the moment a figure becomes text.
-- **Spam filtering** in three layers: no price, below a dust threshold, and name/symbol heuristics. Nothing
+- **Spam filtering** in four layers: below a minimum quantity, no price, below a dust threshold in your
+  currency, and name/symbol heuristics. Nothing
   is ever deleted; filtered positions stay one click away and can be permanently shown or hidden per token.
   Both the no-price rule and the dust threshold apply to NFT collections as well, valued at their floor.
 

@@ -22,7 +22,12 @@ import { describe, expect, it } from 'vitest';
 const OWNER = '0x1111111111111111111111111111111111111111';
 const OTHER = '0x2222222222222222222222222222222222222222';
 
-const spamSettings = { dustThresholdUsd: 1, hideUnpricedTokens: true, useSpamHeuristics: true };
+const spamSettings = {
+  dustThresholdUsd: 1,
+  dustThresholdAmount: 0.000001,
+  hideUnpricedTokens: true,
+  useSpamHeuristics: true,
+};
 
 const buildToken = (chainId: number, address: string, overrides: Partial<StoredToken> = {}): StoredToken => ({
   id: `${chainId}:${address}`,
@@ -795,7 +800,7 @@ describe('manual balances and spam', () => {
     const result = aggregateTokens(
       buildInput({
         prices: [{ id: 'coingecko:bitcoin', priceUsd: 60000, updatedAt: Date.now() }],
-        manualHoldings: [buildManualHolding('balance-1', 'BTC', 0.00000001)],
+        manualHoldings: [buildManualHolding('balance-1', 'BTC', 0.0001)],
         spamSettings: { ...spamSettings, dustThresholdUsd: 0 },
       }),
     );

@@ -16,6 +16,7 @@ vi.mock('lib/db', () => ({
     snapshots: { orderBy: () => ({ toArray: async () => snapshots }), bulkPut: (rows: unknown) => bulkPut(rows) },
     manualBalances: { where: () => ({ equals: () => ({ toArray: async () => manualBalances }) }) },
     manualLedger: { toArray: async () => manualLedger },
+    settings: { get: async () => undefined },
   },
 }));
 
@@ -68,9 +69,7 @@ describe('reprocessManualBalances', () => {
 
     snapshots = [snapshot(30, [chainPosition(1000)]), snapshot(10, [chainPosition(2000)])];
     manualBalances = [balance('balance-1')];
-    manualLedger = [
-      { id: 'e1', balanceId: 'balance-1', kind: 'buy', amount: '0.5', timestamp: NOW - 20 * DAY },
-    ];
+    manualLedger = [{ id: 'e1', balanceId: 'balance-1', kind: 'buy', amount: '0.5', timestamp: NOW - 20 * DAY }];
   });
 
   // The whole point: history recorded before the holding existed gets it folded in.

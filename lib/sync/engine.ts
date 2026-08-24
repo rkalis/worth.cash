@@ -139,11 +139,13 @@ const syncChainForOwner = async (chainId: number, owner: Address, skipInactiveCh
 
   if (nftResult && nftResult.heldItemCount > 0) {
     await runPhase('floor-prices', async () => {
-      const collections = await db.nftCollections.where('chainId').equals(chainId).toArray();
-      await syncFloorPrices(
-        chainId,
-        collections.map((collection) => collection.address as Address),
-      );
+      // Only the collections actually held. This used to price every collection ever seen on the chain,
+      // which for a wallet that has been airdropped junk for years means paying for hundreds of them on
+      // every refresh to value NFTs it no longer owns.
+      const heldItems = await db.nftItems.where('[chainId+owner]').equals([chainId, owner.toLowerCase()]).toArray();
+      const heldCollections = deduplicateArray(heldItems.map((item) => item.collection)) as Address[];
+
+      await syncFloorPrices(chainId, heldCollections);
       await syncNftMetadata(chainId, owner);
     });
   }

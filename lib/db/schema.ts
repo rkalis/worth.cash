@@ -265,6 +265,28 @@ export interface StoredTokenOverride {
   updatedAt: number;
 }
 
+// A grouping the user invented, for looking at the portfolio through their own lens rather than through
+// chains and tickers. "Blue chip", "stablecoins", "long tail": the app has no opinion about what the
+// categories should be, only that an asset belongs to at most one of them.
+export interface StoredAssetCategory {
+  id: string;
+  name: string;
+  // The user's own ordering. It also fixes the colour each category gets on a chart, so that a category
+  // keeps its colour when its value changes and it moves in the ranking.
+  sortIndex: number;
+  createdAt: number;
+}
+
+export interface StoredCategoryAssignment {
+  // The asset's stable identity: a token's override key, or `${chainId}:${address}` for an NFT collection.
+  //
+  // Those two share a format, which is safe because they cannot collide: one contract address on one chain
+  // is one contract, and it is either a token or a collection, never both.
+  id: string;
+  categoryId: string;
+  updatedAt: number;
+}
+
 export interface StoredBlockMarker {
   // `${chainId}:${timestamp}`
   id: string;

@@ -1,10 +1,12 @@
 'use client';
 
 import NftImage from 'components/nfts/NftImage';
+import CategorySelect from 'components/portfolio/CategorySelect';
 import ChainLogo from 'components/ui/ChainLogo';
 import EmptyState from 'components/ui/EmptyState';
 import TablePagination from 'components/ui/TablePagination';
 import { formatShare } from 'lib/format';
+import { useAssetCategories } from 'lib/hooks/useAssetCategories';
 import { useCurrency } from 'lib/hooks/useCurrency';
 import { usePagination } from 'lib/hooks/usePagination';
 import type { AggregatedNftCollection } from 'lib/portfolio/aggregate';
@@ -18,6 +20,10 @@ interface Props {
 // token table so the two read as one list. The NFTs page keeps the richer view with artwork per item.
 const NftCollectionTable = ({ collections, totalValueUsd }: Props) => {
   const pagination = usePagination(collections);
+  const { categories } = useAssetCategories();
+
+  // Same rule as the token table: no column until there is a category to put something in.
+  const showCategory = categories.length > 0;
   const { formatValue, formatPrice } = useCurrency();
 
   if (collections.length === 0) {
@@ -39,7 +45,10 @@ const NftCollectionTable = ({ collections, totalValueUsd }: Props) => {
               <th className="text-right font-medium py-2 px-2 hidden sm:table-cell">Floor</th>
               <th className="text-right font-medium py-2 px-2">Items</th>
               <th className="text-right font-medium py-2 px-2">Value</th>
-              <th className="text-right font-medium py-2 px-2 pr-4">Share</th>
+              <th className="text-right font-medium py-2 px-2">Share</th>
+              {showCategory ? (
+                <th className="text-left font-medium py-2 px-2 pr-4 hidden md:table-cell">Category</th>
+              ) : null}
             </tr>
           </thead>
           <tbody>
@@ -70,9 +79,21 @@ const NftCollectionTable = ({ collections, totalValueUsd }: Props) => {
                     {formatValue(collection.valueUsd)}
                   </td>
 
-                  <td className="py-2.5 px-2 pr-4 text-right text-sm tabular text-zinc-500 dark:text-zinc-400">
+                  <td className="py-2.5 px-2 text-right text-sm tabular text-zinc-500 dark:text-zinc-400">
                     {formatShare(share)}
                   </td>
+
+                  {showCategory ? (
+                    <td className="py-2.5 px-2 pr-4 hidden md:table-cell">
+                      {/* A collection has no coin id to be identified by, so its own key is the only key it
+                          can be filed under. */}
+                      <CategorySelect
+                        assetKeys={[collection.key]}
+                        categoryId={collection.categoryId}
+                        label={collection.name}
+                      />
+                    </td>
+                  ) : null}
                 </tr>
               );
             })}

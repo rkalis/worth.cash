@@ -1,7 +1,9 @@
 import Dexie, { type Table } from 'dexie';
 import type {
   StoredBalance,
+  StoredAssetCategory,
   StoredBlockMarker,
+  StoredCategoryAssignment,
   StoredExchangeAccount,
   StoredExchangeBalance,
   StoredExchangeLedgerEntry,
@@ -39,6 +41,8 @@ export class PortfolioDatabase extends Dexie {
   blockMarkers!: Table<StoredBlockMarker, string>;
   manualBalances!: Table<StoredManualBalance, string>;
   manualLedger!: Table<StoredManualLedgerEntry, string>;
+  assetCategories!: Table<StoredAssetCategory, string>;
+  categoryAssignments!: Table<StoredCategoryAssignment, string>;
 
   constructor() {
     super('portfolio-tracker');
@@ -72,6 +76,13 @@ export class PortfolioDatabase extends Dexie {
     this.version(2).stores({
       manualBalances: 'id, enabled, symbol',
       manualLedger: 'id, [balanceId+timestamp], balanceId, timestamp',
+    });
+
+    // Categories, added the same way: two new stores, nothing existing touched. An asset with no assignment
+    // row is uncategorised, which is the state every asset starts in.
+    this.version(3).stores({
+      assetCategories: 'id, sortIndex',
+      categoryAssignments: 'id, categoryId',
     });
   }
 }

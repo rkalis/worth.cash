@@ -23,6 +23,19 @@ export interface HistoryWindow {
   truncated: boolean;
 }
 
+// The oldest moment the configured plan will price at all, or null when it has no limit.
+//
+// Measured from now, which is what CoinGecko actually enforces. `resolveHistoryWindow` measures its limit
+// against the end of the requested range instead, which is right for a range ending today and wrong for a
+// single point in the past: a date two years ago would look allowed because it is within 365 days of
+// itself, and the request would then be refused.
+export const resolveEarliestPricedTimestamp = async (now: number = Date.now()): Promise<number | null> => {
+  const plan = await resolveCoinGeckoPlan();
+  if (plan.historyLimitDays === null) return null;
+
+  return now - plan.historyLimitDays * DAY;
+};
+
 // Works out how far back history can actually go, given the plan the configured key belongs to.
 //
 // The free and demo plans refuse any range starting more than 365 days ago, which is why a backfilled chart
@@ -42,8 +55,8 @@ export const resolveHistoryWindow = async (requestedFrom: number, to: number = D
 
 // Fetches a whole date range of daily prices in one request, rather than one request per date.
 //
-// This is what makes the weekly backfill affordable: a wallet with 200 distinct tokens over three years
-// costs 200 requests, not 200 times the number of weeks.
+// This is what makes reconstructing a point affordable: a wallet with 200 distinct tokens costs 200
+// requests for the whole range around that moment, not 200 per asset per lookup.
 export const fetchHistoricalSeriesForCoin = async (
   coingeckoId: string,
   priceKey: string,

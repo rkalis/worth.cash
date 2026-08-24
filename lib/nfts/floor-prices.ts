@@ -15,7 +15,7 @@ const FLOOR_PRICE_MAX_AGE = 1 * HOUR;
 //
 // Most collections in a real wallet are not in CoinGecko's index, and re-asking about every one of them on
 // every hourly floor refresh would spend the whole rate limit learning the same 404s. The answer only
-// changes when CoinGecko adds a collection, which is a weekly-scale event, not an hourly one.
+// changes when CoinGecko adds a collection, which happens on the scale of weeks, not hours.
 const COINGECKO_LOOKUP_MAX_AGE = 1 * WEEK;
 
 // Fetches floor prices for the given collections and stores them in USD.

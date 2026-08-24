@@ -4,6 +4,7 @@ import { NATIVE_TOKEN_ADDRESS } from 'lib/constants';
 import { db } from 'lib/db';
 import { syncCursorKey } from 'lib/db/keys';
 import { loadSettings } from 'lib/db/settings';
+import { recordCurrentSnapshot } from 'lib/history/snapshot';
 import { syncFloorPrices } from 'lib/nfts/floor-prices';
 import { syncNftMetadata } from 'lib/nfts/metadata';
 import { refreshAssetMap, resolveCoinGeckoIdsForSymbols } from 'lib/prices/assets';
@@ -26,7 +27,7 @@ export interface SyncOptions {
   // Restricts the run to specific chains. Defaults to whatever the settings enable.
   chainIds?: number[];
   includeExchanges?: boolean;
-  // Fetching exchange transaction history is only needed to backfill the weekly chart.
+  // Fetching exchange transaction history is only needed to reconstruct past points in the chart.
   includeExchangeLedger?: boolean;
 }
 
@@ -72,6 +73,14 @@ export const runSync = async (options: SyncOptions = {}): Promise<void> => {
     if (options.includeExchanges !== false) {
       await syncExchanges(options.includeExchangeLedger === true);
     }
+
+    // Where the portfolio ended up, recorded as a point in its history.
+    //
+    // This is the only thing that writes history automatically, and it is deliberately tied to a sync the
+    // user asked for rather than to a clock: a point means "this is what it was worth when I looked",
+    // which is a fact the user created. Anything else that calls runSync in future is opting into writing
+    // history, and should think about whether it wants to.
+    await recordCurrentSnapshot().catch(() => undefined);
   } finally {
     useSyncProgress.getState().finishRun();
   }

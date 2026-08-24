@@ -76,14 +76,14 @@ const resolveViaExplorer = async (chainId: number, timestamp: number): Promise<n
     const blockNumber = Number(response.result);
     return Number.isFinite(blockNumber) && blockNumber > 0 ? blockNumber : undefined;
   } catch {
-    // Falls back to interpolation, which is accurate enough for a weekly boundary.
+    // Falls back to interpolation, which is accurate enough for a snapshot boundary.
     return undefined;
   }
 };
 
 // Estimates the block from the chain's average block time.
 //
-// A weekly chart does not need block-exact boundaries: being a few hundred blocks out shifts a snapshot by
+// A snapshot does not need a block-exact boundary: being a few hundred blocks out shifts it by
 // minutes, which cannot meaningfully change a week-over-week portfolio value. This is only used for chains
 // whose explorer cannot answer the question directly.
 const estimateViaInterpolation = async (chainId: number, timestamp: number): Promise<number | undefined> => {

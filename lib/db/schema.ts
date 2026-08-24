@@ -174,7 +174,9 @@ export interface StoredHistoricalPrice {
 }
 
 export interface SnapshotPosition {
-  // Matches the `id` of a StoredPrice, so a snapshot can be re-valued later without re-deriving keys.
+  // Identifies the position within the snapshot. A recorded point uses the asset's identity key, since it
+  // is aggregated the way the dashboard aggregates it; a reconstructed point uses the price key it valued
+  // the position with, which is the finest granularity its event history gives it.
   priceKey: string;
   symbol: string;
   amount: number;
@@ -184,7 +186,9 @@ export interface SnapshotPosition {
 }
 
 export interface StoredSnapshot {
-  // Monday 09:00 UTC, as a millisecond timestamp, and the primary key.
+  // The moment the snapshot describes, as a millisecond timestamp, and the primary key. Either the moment
+  // a sync finished or a past moment the user asked to reconstruct, so re-adding the same moment replaces
+  // it rather than producing a second point on top of the first.
   timestamp: number;
   totalUsd: number;
   createdAt: number;

@@ -2,9 +2,9 @@
 
 import NftCollectionTable from 'components/portfolio/NftCollectionTable';
 import PortfolioSummary from 'components/portfolio/PortfolioSummary';
+import PortfolioValue from 'components/portfolio/PortfolioValue';
 import SyncBar from 'components/portfolio/SyncBar';
 import TokenTable from 'components/portfolio/TokenTable';
-import ValueChart from 'components/portfolio/ValueChart';
 import Button from 'components/ui/Button';
 import Card from 'components/ui/Card';
 import Spinner from 'components/ui/Spinner';
@@ -31,28 +31,14 @@ const DashboardPage = () => {
     <div className="flex flex-col gap-6">
       <SyncBar />
 
+      <PortfolioValue totalUsd={portfolio.totals.totalUsd} points={history.points} />
+
       <PortfolioSummary
         totals={portfolio.totals}
-        weekChangeUsd={history.changeUsd}
-        weekChangePercentage={history.changePercentage}
         tokenChainBreakdown={portfolio.tokenChainBreakdown}
         nftChainBreakdown={portfolio.nftChainBreakdown}
         exchangeBreakdown={portfolio.exchangeBreakdown}
       />
-
-      {history.points.length >= 2 ? (
-        <Card
-          title="Weekly value"
-          action={
-            <Link href="/history" className="text-xs text-zinc-500 hover:text-black dark:hover:text-white">
-              View history
-            </Link>
-          }
-          bodyClassName="p-2"
-        >
-          <ValueChart points={history.points} />
-        </Card>
-      ) : null}
 
       <Card
         title={`Assets (${portfolio.visibleTokens.length})`}

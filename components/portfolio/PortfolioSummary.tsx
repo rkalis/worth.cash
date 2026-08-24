@@ -9,47 +9,16 @@ import { cn } from 'lib/utils/classnames';
 
 interface Props {
   totals: PortfolioTotals;
-  weekChangeUsd?: number | null;
-  weekChangePercentage?: number | null;
   tokenChainBreakdown: BreakdownEntry[];
   nftChainBreakdown: BreakdownEntry[];
   exchangeBreakdown: BreakdownEntry[];
 }
 
-const PortfolioSummary = ({
-  totals,
-  weekChangeUsd,
-  weekChangePercentage,
-  tokenChainBreakdown,
-  nftChainBreakdown,
-  exchangeBreakdown,
-}: Props) => {
-  const { formatValue } = useCurrency();
-
-  const hasChange = weekChangeUsd !== null && weekChangeUsd !== undefined && Number.isFinite(weekChangeUsd);
-  const isPositive = (weekChangeUsd ?? 0) >= 0;
-
+// Where the money sits, split by kind of holding. The headline figure and the chart behind it live in
+// PortfolioValue; this is the layer underneath that says what makes it up.
+const PortfolioSummary = ({ totals, tokenChainBreakdown, nftChainBreakdown, exchangeBreakdown }: Props) => {
   return (
     <div className="grid gap-3 md:grid-cols-3 items-start">
-      <div className="md:col-span-3 border border-zinc-200 dark:border-zinc-800 rounded-xl p-5">
-        <div className="text-xs text-zinc-500 mb-1.5">Total value</div>
-        <div className="text-4xl font-semibold tabular tracking-tight">{formatValue(totals.totalUsd)}</div>
-        {hasChange ? (
-          <div className="text-xs mt-2 tabular">
-            <span className={isPositive ? 'text-green-600 dark:text-green-500' : 'text-red-600 dark:text-red-500'}>
-              {isPositive ? '+' : '-'}
-              {formatValue(Math.abs(weekChangeUsd as number))}
-              {weekChangePercentage !== null &&
-              weekChangePercentage !== undefined &&
-              Number.isFinite(weekChangePercentage)
-                ? ` (${isPositive ? '+' : ''}${weekChangePercentage.toFixed(2)}%)`
-                : ''}
-            </span>{' '}
-            <span className="text-zinc-500">since last week</span>
-          </div>
-        ) : null}
-      </div>
-
       <SummaryTile label="Tokens" value={totals.tokensUsd} total={totals.totalUsd} breakdown={tokenChainBreakdown} />
       <SummaryTile label="NFTs" value={totals.nftsUsd} total={totals.totalUsd} breakdown={nftChainBreakdown} />
       <SummaryTile

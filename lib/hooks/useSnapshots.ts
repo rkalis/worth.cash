@@ -18,7 +18,10 @@ export interface SnapshotHistory {
   isLoading: boolean;
 }
 
-// The weekly value history, plus the week-over-week change the dashboard headline shows.
+// The recorded value history, plus the change against the previous point that the dashboard headline shows.
+//
+// Points are whatever the user has recorded: one per sync, plus any past moments they asked for. They are
+// therefore unevenly spaced, which is why nothing here assumes a cadence.
 export const useSnapshots = (): SnapshotHistory => {
   const snapshots = useLiveQuery(() => db.snapshots.orderBy('timestamp').toArray(), []);
 

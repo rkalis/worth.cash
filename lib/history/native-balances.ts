@@ -18,7 +18,7 @@ export interface NativeBalanceResult {
 
 const BALANCE_CONCURRENCY = 4;
 
-// Reads what the native balance was at each weekly boundary.
+// Reads what the native balance was at each requested moment.
 //
 // This cannot be reconstructed the way token balances are. ETH, BNB, POL and friends move without emitting
 // any event at all, so the transfer log history that every other part of the backfill relies on says nothing

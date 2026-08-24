@@ -1,8 +1,7 @@
 import { createEnabledChainFilter } from 'lib/chains/enabled';
 import type { StoredBalance, StoredExchangeBalance, StoredToken, StoredTransferEvent } from 'lib/db/schema';
 import { normaliseExchangeAsset } from 'lib/exchanges/types';
-import { mergeNativeBalanceSeries } from 'lib/history/backfill';
-import { currentSnapshotTimestamp, getWeeklySnapshotTimestamps } from 'lib/history/weeks';
+import { mergeNativeBalanceSeries } from 'lib/history/reconstruct';
 import {
   type AggregationInput,
   aggregateNftCollections,
@@ -12,7 +11,6 @@ import {
 import { classifyTokenSpam } from 'lib/portfolio/spam';
 import { DEFAULT_SETTINGS } from 'lib/settings/types';
 import { deriveHeldNfts } from 'lib/sync/nfts';
-import { WEEK } from 'lib/utils/time';
 import { describe, expect, it } from 'vitest';
 
 const OWNER = '0x1111111111111111111111111111111111111111';
@@ -762,40 +760,6 @@ describe('normaliseExchangeAsset', () => {
 
   it('leaves ordinary tickers untouched', () => {
     expect(normaliseExchangeAsset('sol')).toBe('SOL');
-  });
-});
-
-describe('weekly snapshot timestamps', () => {
-  it('lands on Monday at 09:00 UTC', () => {
-    const timestamp = currentSnapshotTimestamp(Date.UTC(2026, 7, 21, 14, 30));
-    const date = new Date(timestamp);
-
-    expect(date.getUTCDay()).toBe(1);
-    expect(date.getUTCHours()).toBe(9);
-  });
-
-  // Before 09:00 on a Monday, the current week's snapshot has not been taken yet.
-  it('falls back to the previous week early on a Monday', () => {
-    const mondayEarly = Date.UTC(2026, 7, 17, 3, 0);
-    const timestamp = currentSnapshotTimestamp(mondayEarly);
-
-    expect(timestamp).toBe(Date.UTC(2026, 7, 10, 9, 0));
-  });
-
-  it('uses the same Monday once 09:00 has passed', () => {
-    const timestamp = currentSnapshotTimestamp(Date.UTC(2026, 7, 17, 9, 0));
-
-    expect(timestamp).toBe(Date.UTC(2026, 7, 17, 9, 0));
-  });
-
-  it('returns evenly spaced weeks in ascending order', () => {
-    const to = Date.UTC(2026, 7, 21, 12, 0);
-    const timestamps = getWeeklySnapshotTimestamps(to - 4 * WEEK, to);
-
-    expect(timestamps.length).toBeGreaterThanOrEqual(4);
-    for (let index = 1; index < timestamps.length; index += 1) {
-      expect(timestamps[index] - timestamps[index - 1]).toBe(WEEK);
-    }
   });
 });
 

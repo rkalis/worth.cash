@@ -92,7 +92,7 @@ export const fetchCoinGeckoNftCollection = async (
 
 // Historical floor prices for a collection, as a series the snapshot builder can read like any other price.
 //
-// This is the only way to value NFTs correctly in the weekly chart rather than applying today's floor to
+// This is the only way to value NFTs correctly at a past moment rather than applying today's floor to
 // past holdings. It is a paid-plan endpoint, so on a free or demo key it returns an empty series and the
 // caller falls back to the current floor.
 export const fetchCoinGeckoNftFloorHistory = async (

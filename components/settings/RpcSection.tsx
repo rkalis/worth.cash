@@ -11,7 +11,7 @@ import { useMemo, useState } from 'react';
 // Custom RPC endpoints, one per chain.
 //
 // Two things need these. Syncing a long history reads a lot of logs, and a paid endpoint has the rate
-// limits to do that quickly. Rebuilding the weekly chart additionally needs historical state, which only an
+// limits to do that quickly. Reconstructing a past point additionally needs historical state, which only an
 // archive node can serve, so a chain on a pruning public RPC will be missing its native balance history.
 const RpcSection = () => {
   const { settings, updateSettings } = useSettings();

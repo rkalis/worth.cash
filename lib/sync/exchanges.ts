@@ -25,7 +25,7 @@ export const toCredentials = (account: StoredExchangeAccount): ExchangeCredentia
 
 // Reads current balances for one exchange account and, when asked, its transaction history.
 //
-// The ledger is only needed for the weekly chart's backfill, and it is far more expensive to fetch than the
+// The ledger is only needed to reconstruct a past point, and it is far more expensive to fetch than the
 // balances, so it is a separate opt-in rather than part of every refresh.
 export const syncExchangeAccount = async (
   account: StoredExchangeAccount,

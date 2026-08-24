@@ -1,47 +1,63 @@
 'use client';
 
+import SnapshotProgress from 'components/portfolio/SnapshotProgress';
 import ValueChart from 'components/portfolio/ValueChart';
 import Button from 'components/ui/Button';
 import Card from 'components/ui/Card';
 import EmptyState from 'components/ui/EmptyState';
+import Input from 'components/ui/Input';
 import { getChainName } from 'lib/chains';
-import { formatDateShort } from 'lib/format';
-import { type BackfillProgress, type BackfillResult, backfillWeeklySnapshots } from 'lib/history/backfill';
+import { formatDateShort, formatDateTimeUtc } from 'lib/format';
+import type { ReconstructionStep } from 'lib/history/progress';
+import { reconstructSnapshotAt, type SnapshotReconstruction } from 'lib/history/reconstruct';
+import {
+  DEFAULT_SNAPSHOT_TIME_UTC,
+  deleteSnapshot,
+  snapshotTimestampFromUtcInput,
+  toUtcDateInputValue,
+} from 'lib/history/snapshot';
 import { useCurrency } from 'lib/hooks/useCurrency';
 import { useSnapshots } from 'lib/hooks/useSnapshots';
-import { syncAllExchangeAccounts } from 'lib/sync/exchanges';
 import { cn } from 'lib/utils/classnames';
 import { useState } from 'react';
 
 const HistoryPage = () => {
   const history = useSnapshots();
   const { formatValue } = useCurrency();
-  const [isRebuilding, setIsRebuilding] = useState(false);
-  const [progress, setProgress] = useState<BackfillProgress>();
-  const [result, setResult] = useState<BackfillResult>();
+
+  const [date, setDate] = useState(() => toUtcDateInputValue(Date.now()));
+  const [time, setTime] = useState(DEFAULT_SNAPSHOT_TIME_UTC);
+  const [includeExchangeHistory, setIncludeExchangeHistory] = useState(false);
+
+  const [isBuilding, setIsBuilding] = useState(false);
+  const [steps, setSteps] = useState<ReconstructionStep[]>();
+  const [result, setResult] = useState<SnapshotReconstruction>();
   const [error, setError] = useState<string>();
 
-  const rebuild = async (includeExchangeLedger: boolean) => {
-    setIsRebuilding(true);
+  const addSnapshot = async () => {
+    setIsBuilding(true);
     setError(undefined);
     setResult(undefined);
+    setSteps(undefined);
 
     try {
-      // Exchange history is fetched first so that the reconstruction has something to work from. It is the
-      // slow part, which is why it is opt-in rather than part of every rebuild.
-      if (includeExchangeLedger) {
-        await syncAllExchangeAccounts({ includeLedger: true });
-      }
+      if (requestedTimestamp === null) return;
 
-      setResult(await backfillWeeklySnapshots(setProgress));
-    } catch (rebuildError) {
-      setError(rebuildError instanceof Error ? rebuildError.message : String(rebuildError));
+      setResult(
+        await reconstructSnapshotAt(requestedTimestamp, {
+          includeExchangeHistory,
+          onProgress: setSteps,
+        }),
+      );
+    } catch (buildError) {
+      setError(buildError instanceof Error ? buildError.message : String(buildError));
     } finally {
-      setIsRebuilding(false);
-      setProgress(undefined);
+      setIsBuilding(false);
     }
   };
 
+  const requestedTimestamp = snapshotTimestampFromUtcInput(date, time);
+  const isValidMoment = requestedTimestamp !== null && requestedTimestamp <= Date.now();
   const reversedPoints = [...history.points].reverse();
 
   return (
@@ -49,83 +65,67 @@ const HistoryPage = () => {
       <div>
         <h1>History</h1>
         <p className="text-sm text-zinc-500 mt-1">
-          Weekly snapshots, taken every Monday at 09:00 UTC and reconstructed from your transfer history.
+          A snapshot is recorded every time you sync, and you can add one for any past moment from the transfer history
+          already stored locally.
         </p>
       </div>
 
-      <Card title="Rebuild history" bodyClassName="flex flex-col gap-3">
+      <Card title="Add a snapshot" bodyClassName="flex flex-col gap-3">
         <p className="text-xs text-zinc-600 dark:text-zinc-400">
-          Rebuilding replays every stored transfer event against weekly block boundaries and prices each week with
-          historical prices. Token balances are reconstructed from events rather than read from chain, so rebasing
-          tokens are approximate. Historical NFT floors need a paid CoinGecko plan; without one, NFTs fall back to their
-          current floor price.
+          Replays your stored transfer events up to the block current at that moment and prices what was held with
+          historical prices. Balances are reconstructed from events rather than read from the chain, so rebasing tokens
+          are approximate. Native balances are read from historical chain state, which needs an archive-capable RPC.
+          Historical NFT floors need a paid CoinGecko plan; without one, NFTs fall back to today's floor.
         </p>
 
-        <div className="flex flex-wrap gap-2">
+        <div className="flex flex-wrap items-end gap-3">
+          <div className="w-44">
+            <Input
+              name="snapshot-date"
+              label="Date (UTC)"
+              type="date"
+              value={date}
+              max={toUtcDateInputValue(Date.now())}
+              onChange={(event) => setDate(event.target.value)}
+            />
+          </div>
+
+          <div className="w-32">
+            <Input
+              name="snapshot-time"
+              label="Time (UTC)"
+              type="time"
+              value={time}
+              onChange={(event) => setTime(event.target.value)}
+            />
+          </div>
+
           <Button
             variant="primary"
             size="sm"
-            onClick={() => rebuild(false)}
-            loading={isRebuilding}
-            disabled={isRebuilding}
+            onClick={addSnapshot}
+            loading={isBuilding}
+            disabled={isBuilding || !isValidMoment}
           >
-            Rebuild from on-chain history
-          </Button>
-          <Button
-            variant="secondary"
-            size="sm"
-            onClick={() => rebuild(true)}
-            loading={isRebuilding}
-            disabled={isRebuilding}
-          >
-            Rebuild including exchange history
+            Add snapshot
           </Button>
         </div>
 
-        {progress ? (
-          <p className="text-xs text-zinc-500 tabular">
-            {progress.phase.replace('-', ' ')}: {progress.completed} / {progress.total}
-          </p>
-        ) : null}
+        <label className="flex items-center gap-2 text-xs text-zinc-600 dark:text-zinc-400">
+          <input
+            type="checkbox"
+            checked={includeExchangeHistory}
+            onChange={(event) => setIncludeExchangeHistory(event.target.checked)}
+            className="size-3.5 accent-brand"
+          />
+          Fetch exchange transaction history first (slow, and only needed once per exchange account)
+        </label>
+
+        {steps ? <SnapshotProgress steps={steps} /> : null}
 
         {error ? <p className="text-xs text-red-600 dark:text-red-400">{error}</p> : null}
 
-        {result ? (
-          <div className="text-xs text-zinc-600 dark:text-zinc-400 flex flex-col gap-1">
-            <span>
-              Built {result.snapshotCount} weekly snapshots from {formatDateShort(result.from)} to{' '}
-              {formatDateShort(result.to)}.
-            </span>
-            {result.truncatedByPlan ? (
-              <span className="text-amber-700 dark:text-amber-500">
-                Your CoinGecko plan only allows 365 days of history, so earlier weeks could not be priced. A paid plan
-                removes this limit.
-              </span>
-            ) : null}
-            {result.unpricedAssetCount > 0 ? (
-              <span>
-                {result.unpricedAssetCount} asset{result.unpricedAssetCount === 1 ? '' : 's'} had no historical price
-                and contributed nothing to the chart.
-              </span>
-            ) : null}
-            {result.nftCollectionsAtCurrentFloor > 0 ? (
-              <span>
-                {result.nftCollectionsAtCurrentFloor} NFT collection
-                {result.nftCollectionsAtCurrentFloor === 1 ? ' was' : 's were'} valued at today's floor price rather
-                than the floor at the time, because no historical floor was available for them.
-              </span>
-            ) : null}
-            {result.chainsWithoutNativeHistory.length > 0 ? (
-              <span className="text-amber-700 dark:text-amber-500">
-                Native balance history is missing for {result.chainsWithoutNativeHistory.length} chain
-                {result.chainsWithoutNativeHistory.length === 1 ? '' : 's'} (
-                {result.chainsWithoutNativeHistory.map((chainId) => getChainName(chainId as never)).join(', ')}
-                ), because their RPC does not serve historical state. Configuring an archive-capable RPC for those
-                chains in settings fixes it.
-              </span>
-            ) : null}
-          </div>
-        ) : null}
+        {result ? <ReconstructionSummary result={result} formatValue={formatValue} /> : null}
       </Card>
 
       <Card title="Portfolio value" bodyClassName="p-2">
@@ -136,16 +136,17 @@ const HistoryPage = () => {
         {reversedPoints.length === 0 ? (
           <EmptyState
             title="No snapshots yet"
-            description="Rebuild your history above to reconstruct past weeks from the transfer events already stored locally."
+            description="Run a sync to record where your portfolio stands now, or add a snapshot above for a moment in the past."
           />
         ) : (
           <div className="overflow-x-auto max-h-[480px] overflow-y-auto">
-            <table className="w-full">
+            <table className="w-full min-w-[420px]">
               <thead className="sticky top-0 bg-white dark:bg-black">
                 <tr className="text-[11px] uppercase tracking-wide text-zinc-400 border-b border-zinc-200 dark:border-zinc-800">
-                  <th className="text-left font-medium py-2 pl-4">Week</th>
+                  <th className="text-left font-medium py-2 pl-4">Taken</th>
                   <th className="text-right font-medium py-2 px-4">Total value</th>
-                  <th className="text-right font-medium py-2 pr-4">Change</th>
+                  <th className="text-right font-medium py-2 px-2">Change</th>
+                  <th className="w-8" />
                 </tr>
               </thead>
               <tbody>
@@ -155,13 +156,13 @@ const HistoryPage = () => {
 
                   return (
                     <tr key={point.timestamp} className="border-b border-zinc-100 dark:border-zinc-900 last:border-0">
-                      <td className="py-2 pl-4 text-sm">{formatDateShort(point.timestamp)}</td>
+                      <td className="py-2 pl-4 text-sm">{formatDateTimeUtc(point.timestamp)}</td>
                       <td className="py-2 px-4 text-right text-sm tabular font-medium">
                         {formatValue(point.totalUsd)}
                       </td>
                       <td
                         className={cn(
-                          'py-2 pr-4 text-right text-sm tabular',
+                          'py-2 px-2 text-right text-sm tabular',
                           change === null
                             ? 'text-zinc-400'
                             : change >= 0
@@ -171,6 +172,19 @@ const HistoryPage = () => {
                       >
                         {change === null ? '-' : `${change >= 0 ? '+' : '-'}${formatValue(Math.abs(change))}`}
                       </td>
+                      <td className="py-2 pr-4 pl-2 text-right">
+                        {/* Snapshots are now the user's own records rather than something a schedule
+                            produced, so they get to remove one they did not mean to take. */}
+                        <button
+                          type="button"
+                          aria-label={`Delete the snapshot from ${formatDateTimeUtc(point.timestamp)}`}
+                          title="Delete this snapshot"
+                          className="text-xs text-zinc-400 hover:text-black dark:hover:text-white px-1"
+                          onClick={() => deleteSnapshot(point.timestamp)}
+                        >
+                          delete
+                        </button>
+                      </td>
                     </tr>
                   );
                 })}
@@ -179,6 +193,65 @@ const HistoryPage = () => {
           </div>
         )}
       </Card>
+    </div>
+  );
+};
+
+interface SummaryProps {
+  result: SnapshotReconstruction;
+  formatValue: (value: number | null | undefined) => string;
+}
+
+const ReconstructionSummary = ({ result, formatValue }: SummaryProps) => {
+  if (result.status === 'beyond-plan-limit') {
+    return (
+      <p className="text-xs text-amber-700 dark:text-amber-500">
+        Your CoinGecko plan only serves prices back to {formatDateShort(result.earliestPricedTimestamp ?? 0)}, so that
+        moment cannot be priced and no snapshot was added. A paid plan removes this limit.
+      </p>
+    );
+  }
+
+  if (result.status === 'no-holdings') {
+    return (
+      <p className="text-xs text-zinc-600 dark:text-zinc-400">
+        Nothing was held at {formatDateTimeUtc(result.timestamp)}, so no snapshot was added. If that looks wrong, the
+        transfer events for that period may not be synced yet.
+      </p>
+    );
+  }
+
+  return (
+    <div className="text-xs text-zinc-600 dark:text-zinc-400 flex flex-col gap-1">
+      <span>
+        Added a snapshot for {formatDateTimeUtc(result.timestamp)} worth {formatValue(result.totalUsd)} across{' '}
+        {result.positionCount} position{result.positionCount === 1 ? '' : 's'}.
+      </span>
+
+      {result.unpricedAssetCount > 0 ? (
+        <span>
+          {result.unpricedAssetCount} asset{result.unpricedAssetCount === 1 ? '' : 's'} had no historical price and
+          contributed nothing to the total.
+        </span>
+      ) : null}
+
+      {result.nftCollectionsAtCurrentFloor > 0 ? (
+        <span>
+          {result.nftCollectionsAtCurrentFloor} NFT collection
+          {result.nftCollectionsAtCurrentFloor === 1 ? ' was' : 's were'} valued at today's floor price rather than the
+          floor at the time, because no historical floor was available for them.
+        </span>
+      ) : null}
+
+      {result.chainsWithoutNativeHistory.length > 0 ? (
+        <span className="text-amber-700 dark:text-amber-500">
+          Native balances are missing for {result.chainsWithoutNativeHistory.length} chain
+          {result.chainsWithoutNativeHistory.length === 1 ? '' : 's'} (
+          {result.chainsWithoutNativeHistory.map((chainId) => getChainName(chainId as never)).join(', ')}), because
+          their RPC does not serve historical state. Configuring an archive-capable RPC for those chains in settings
+          fixes it.
+        </span>
+      ) : null}
     </div>
   );
 };

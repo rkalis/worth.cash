@@ -19,8 +19,15 @@ database, no account, and nothing is uploaded anywhere except to the APIs whose 
 - **NFTs**, grouped by collection, with artwork and floor prices from CoinGecko first and OpenSea for the
   long tail. The portfolio page carries a condensed collection table; the NFTs page has the full view with
   per-item artwork.
-- **A weekly value chart**, snapshotted every Monday at 09:00 UTC and backfillable from history you already
-  have locally.
+- **A value chart you control.** Nothing is recorded on a schedule: a snapshot is written every time you
+  sync, and you can add one for any past moment by picking a date and time on the History page, which
+  reconstructs what was held then from the transfer history already stored locally, reporting each step as it
+  goes. Snapshots you did not mean to take can be deleted. The dashboard shows the total, the change over
+  1W/2W/1M/3M/1Y, and the chart in one place, with the chart windowed to whichever range you pick.
+
+  Because snapshots land whenever you sync rather than on a schedule, a change is measured against the
+  nearest snapshot on or before that point, which can be older than the period names. Each figure says
+  which moment it actually used.
 - **A display currency**, US dollars or euro. Prices are always fetched and stored in dollars; another
   currency is converted from that at the moment a figure becomes text.
 - **Spam filtering** in three layers: no price, below a dust threshold, and name/symbol heuristics. Nothing
@@ -163,19 +170,22 @@ key, or a custom RPC for that chain, in settings.
 
 ## Known limitations
 
-- **Historical token balances are reconstructed from transfer events**, so they are exact for ordinary
-  ERC-20s and approximate for rebasing or fee-on-transfer tokens.
+- **Snapshots added for a past date are reconstructed from transfer events**, so they are exact for ordinary
+  ERC-20s and approximate for rebasing or fee-on-transfer tokens. A snapshot recorded by a sync is not
+  reconstructed at all: balances have just been read from the chain, so it is exactly the figure the
+  dashboard was showing.
 - **Historical native balances need an archive node.** ETH and friends move without emitting any event, so
-  past balances are read from chain state instead. Chains whose RPC cannot serve that are reported after a
-  rebuild; setting a custom RPC for them in settings fixes it.
+  past balances are read from chain state instead. Chains whose RPC cannot serve that are reported when a
+  snapshot is added; setting a custom RPC for them in settings fixes it.
 - **Historical NFT floors need a paid CoinGecko plan.** Its `/nfts/{id}/market_chart` endpoint is PRO-only,
-  so on a free or demo key the weekly chart values NFTs at today's floor with historically correct
-  quantities. The rebuild reports how many collections that applied to.
-- **Free and demo CoinGecko plans cap history at 365 days**, so the chart may start later than your wallet
-  did. The rebuild says so when this happens.
-- **Past values are converted at today's rate.** The weekly chart in euro is your portfolio's dollar history
+  so on a free or demo key a reconstructed point values NFTs at today's floor with historically correct
+  quantities. Adding a snapshot reports how many collections that applied to.
+- **Free and demo CoinGecko plans cap history at 365 days.** A moment older than that cannot be priced, so
+  adding a snapshot for it is refused with the earliest date that would work, rather than writing a point
+  worth nothing that looks like a real crash.
+- **Past values are converted at today's rate.** The chart in euro is your portfolio's dollar history
   expressed in today's euro, not what it was worth in euro at the time. Snapshots store dollars, and mixing a
-  historical FX rate into them would make two charts disagree about the same week.
+  historical FX rate into them would make two charts disagree about the same moment.
 - **Exchange credentials are stored in plain text** in IndexedDB. That is a deliberate trade for a personal,
   self-hosted app where balances refresh unattended; anyone with access to your browser profile can read
   them. Use read-only keys.

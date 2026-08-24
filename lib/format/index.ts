@@ -123,7 +123,26 @@ export const shortenAddress = (address: string, characters = 4): string => {
 };
 
 export const formatDateShort = (timestamp: number): string => {
-  return new Date(timestamp).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' });
+  // UTC rather than the viewer's zone: snapshot times are chosen and shown in UTC, and a date that
+  // disagreed with the time printed beside it would be worse than either alone.
+  return new Date(timestamp).toLocaleDateString('en-GB', {
+    day: 'numeric',
+    month: 'short',
+    year: 'numeric',
+    timeZone: 'UTC',
+  });
+};
+
+// Snapshots are taken at a moment the user chose, so the time is part of what identifies them, and it is
+// shown in UTC because that is what they were asked for.
+export const formatDateTimeUtc = (timestamp: number): string => {
+  const time = new Date(timestamp).toLocaleTimeString('en-GB', {
+    hour: '2-digit',
+    minute: '2-digit',
+    timeZone: 'UTC',
+  });
+
+  return `${formatDateShort(timestamp)}, ${time} UTC`;
 };
 
 export const formatRelativeTime = (timestamp: number): string => {

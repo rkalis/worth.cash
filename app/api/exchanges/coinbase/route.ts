@@ -12,7 +12,7 @@ const COINBASE_API_HOST = 'api.coinbase.com';
 // cannot be turned into a general-purpose proxy for the caller's credentials.
 const OPERATIONS = {
   accounts: { method: 'GET', path: '/api/v3/brokerage/accounts' },
-  // The v2 API is the only one that exposes a per-account transaction history, which is what the weekly
+  // The v2 API is the only one that exposes a per-account transaction history, which is what the
   // chart's backfill reconstructs past balances from.
   v2Accounts: { method: 'GET', path: '/v2/accounts' },
   v2Transactions: { method: 'GET', path: '/v2/accounts/{accountId}/transactions' },

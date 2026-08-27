@@ -105,8 +105,10 @@ export const fetchCoinGeckoNftFloorHistory = async (
   // Checked up front so a free-tier user does not spend their rate limit on a request that always 401s.
   if (plan.tier !== 'pro') return { priceKey, points: [] };
 
-  // This endpoint takes a day count rather than a date range, unlike the token history endpoints.
-  const days = Math.max(1, Math.ceil((window.to - window.from) / DAY));
+  // This endpoint takes a day count rather than a date range, unlike the token history endpoints, and it
+  // counts back from now rather than across the window. Measuring the window's own width asks for the last
+  // few days whatever moment was requested, so an old point silently gets recent floors.
+  const days = Math.max(1, Math.ceil((Date.now() - window.from) / DAY));
 
   try {
     const response = await coinGeckoRequest<NftMarketChartResponse>(

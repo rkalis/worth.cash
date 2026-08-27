@@ -18,7 +18,11 @@ vi.mock('lib/prices/historical', async (importOriginal) => ({
   fetchHistoricalSeriesForCoin: (...args: unknown[]) => fetchHistoricalSeriesForCoin(...args),
 }));
 
-vi.mock('lib/history/blocks', () => ({ resolveBlockAtTimestamp: async () => 300 }));
+vi.mock('lib/history/blocks', () => ({
+  resolveBlockAtTimestamp: async () => 300,
+  resolveBlocksForTimestamps: async (chainIds: number[], timestamps: number[]) =>
+    new Map(chainIds.map((chainId) => [chainId, timestamps.map(() => 300)])),
+}));
 
 vi.mock('lib/db', () => ({
   db: {

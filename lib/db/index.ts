@@ -1,7 +1,7 @@
 import Dexie, { type Table } from 'dexie';
 import type {
-  StoredBalance,
   StoredAssetCategory,
+  StoredBalance,
   StoredBlockMarker,
   StoredCategoryAssignment,
   StoredExchangeAccount,

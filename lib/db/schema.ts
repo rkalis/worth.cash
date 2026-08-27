@@ -183,6 +183,27 @@ export interface SnapshotPosition {
   priceUsd: number | null;
   valueUsd: number;
   kind: 'token' | 'nft' | 'exchange' | 'manual';
+  // The part of `amount` each tracked wallet contributed, keyed by lowercase address.
+  //
+  // This is what lets a wallet be taken back out of a recorded point by arithmetic rather than by
+  // rebuilding it from replayed events. Only ever present on `token` and `nft` positions: an exchange or
+  // hand-entered holding belongs to no wallet. `amount` minus the sum of these is the untagged remainder,
+  // contributed by wallets measured before attribution existed and no longer separable.
+  amountByOwner?: Record<string, number>;
+}
+
+// What a snapshot measured, as opposed to what it found.
+//
+// Recorded so that a later run can tell whether a point is still measuring the same portfolio the app is
+// measuring today. Absent on every row written before this existed, and absent means unknown rather than
+// "assumed to be the current one".
+export interface SnapshotScope {
+  // Lowercase, sorted.
+  wallets: string[];
+  // The sync setting verbatim rather than the chain list it resolves to. Storing the resolved list would
+  // make every stamp drift the day the app adds support for another chain.
+  chainIds: number[] | null;
+  includeTestnets: boolean;
 }
 
 export interface StoredSnapshot {
@@ -195,6 +216,13 @@ export interface StoredSnapshot {
   // Positions are stored inline rather than in their own table: a snapshot is always read whole, and the
   // row count would otherwise grow by the size of the portfolio every single week.
   positions: SnapshotPosition[];
+  scope?: SnapshotScope;
+  // The wallets whose contribution is recorded in `amountByOwner` and can therefore be reversed exactly.
+  //
+  // Stored rather than derived from the position maps: a wallet that was measured but happened to hold
+  // nothing at that moment appears in no map, and reading that as "not attributed" would leave it being
+  // folded in again on every run.
+  attributedOwners?: string[];
 }
 
 export interface StoredExchangeBalance {

@@ -1,5 +1,8 @@
 import { db } from 'lib/db';
-import type { SnapshotPosition, StoredSnapshot } from 'lib/db/schema';
+import type { SnapshotPosition, SnapshotScope, StoredSnapshot } from 'lib/db/schema';
+import { loadSettings } from 'lib/db/settings';
+import { splitNftPositionsByOwner, splitTokenPositionsByOwner } from 'lib/history/attribution';
+import { normaliseOwners } from 'lib/history/scope';
 import { aggregateNftCollections, aggregateTokens, calculateTotals } from 'lib/portfolio/aggregate';
 import { buildAggregationInput, loadPortfolioSource } from 'lib/portfolio/load';
 
@@ -11,12 +14,21 @@ import { buildAggregationInput, loadPortfolioSource } from 'lib/portfolio/load';
 //
 // Returns the snapshot it wrote, or undefined when there was nothing to record.
 export const recordCurrentSnapshot = async (timestamp: number = Date.now()): Promise<StoredSnapshot | undefined> => {
-  const input = buildAggregationInput(await loadPortfolioSource());
+  const source = await loadPortfolioSource();
+  const input = buildAggregationInput(source);
 
   const tokens = aggregateTokens(input).filter((token) => !token.isHidden);
   const nftCollections = aggregateNftCollections(input).filter((collection) => !collection.isHidden);
 
-  const positions = [...buildTokenPositions(tokens), ...buildNftPositions(nftCollections)];
+  // Which wallet contributed what, split out of the same rows the totals were built from.
+  //
+  // Free to compute here and impossible to recover later: once the amounts are summed, a wallet cannot be
+  // taken back out of the figure. Recording the split is what lets a wallet be removed from this point by
+  // arithmetic rather than by replaying its history from stored events.
+  const tokenSplits = splitTokenPositionsByOwner(tokens, input);
+  const nftSplits = splitNftPositionsByOwner(nftCollections);
+
+  const positions = [...buildTokenPositions(tokens, tokenSplits), ...buildNftPositions(nftCollections, nftSplits)];
 
   // An empty portfolio is not a portfolio worth zero. A first sync that failed everywhere looks exactly
   // like this, and recording it would put a false zero on the chart that the user cannot tell from a real
@@ -30,17 +42,39 @@ export const recordCurrentSnapshot = async (timestamp: number = Date.now()): Pro
     totalUsd: totals.totalUsd,
     createdAt: Date.now(),
     positions,
+    // Stamped with the set this point was measured over, which the writer knows exactly because it just
+    // measured it. Without the stamp a later run has to infer it from when each wallet was added.
+    scope: await currentScopeFor(source),
+    // Every wallet that was measured, not only those that turned out to hold something. A wallet holding
+    // nothing appears in no split, and reading that as "not attributed" would have it folded in again on
+    // every future run.
+    attributedOwners: normaliseOwners((source.wallets ?? []).map((wallet) => wallet.address)),
   };
 
   await db.snapshots.put(snapshot);
   return snapshot;
 };
 
+// The scope the writer just measured, built from the source it aggregated rather than from a second read,
+// so the stamp cannot describe a different moment than the figures beside it.
+const currentScopeFor = async (source: Awaited<ReturnType<typeof loadPortfolioSource>>): Promise<SnapshotScope> => {
+  const { sync } = await loadSettings();
+
+  return {
+    wallets: normaliseOwners((source.wallets ?? []).map((wallet) => wallet.address)),
+    chainIds: sync.enabledChainIds,
+    includeTestnets: sync.includeTestnets,
+  };
+};
+
 // One position per asset per kind of place it is held.
 //
 // A row can now span chains and exchanges at once, and the split is kept rather than flattened so a
 // snapshot still says how much was on-chain and how much sat on an exchange.
-export const buildTokenPositions = (tokens: ReturnType<typeof aggregateTokens>): SnapshotPosition[] =>
+export const buildTokenPositions = (
+  tokens: ReturnType<typeof aggregateTokens>,
+  splitsByKey: Map<string, Record<string, number>> = new Map(),
+): SnapshotPosition[] =>
   tokens.flatMap((token) => {
     const positions: SnapshotPosition[] = [];
 
@@ -56,6 +90,7 @@ export const buildTokenPositions = (tokens: ReturnType<typeof aggregateTokens>):
         priceUsd: token.priceUsd,
         valueUsd: token.chainValueUsd,
         kind: 'token',
+        amountByOwner: splitsByKey.get(token.key),
       });
     }
 
@@ -90,7 +125,10 @@ const sumLocationAmounts = (
 ): number =>
   token.locations.filter((location) => location.kind === kind).reduce((total, location) => total + location.amount, 0);
 
-export const buildNftPositions = (collections: ReturnType<typeof aggregateNftCollections>): SnapshotPosition[] =>
+export const buildNftPositions = (
+  collections: ReturnType<typeof aggregateNftCollections>,
+  splitsByKey: Map<string, Record<string, number>> = new Map(),
+): SnapshotPosition[] =>
   collections.map((collection) => ({
     priceKey: collection.key,
     symbol: collection.name,
@@ -98,6 +136,7 @@ export const buildNftPositions = (collections: ReturnType<typeof aggregateNftCol
     priceUsd: collection.floorPriceUsd,
     valueUsd: collection.valueUsd ?? 0,
     kind: 'nft' as const,
+    amountByOwner: splitsByKey.get(collection.key),
   }));
 
 export const deleteSnapshot = async (timestamp: number): Promise<void> => {

@@ -1,10 +1,13 @@
+import type { SnapshotPosition } from 'lib/db/schema';
 import type { AggregationInput } from 'lib/portfolio/aggregate';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 const put = vi.fn();
 let aggregationInput: AggregationInput;
 
-vi.mock('lib/db', () => ({ db: { snapshots: { put: (row: unknown) => put(row) } } }));
+vi.mock('lib/db', () => ({
+  db: { snapshots: { put: (row: unknown) => put(row) }, settings: { get: async () => undefined } },
+}));
 
 // The real aggregation runs; only the reading of the tables is stubbed. That is the property worth
 // testing: a recorded point is the same computation the dashboard shows, not a second implementation.
@@ -121,5 +124,67 @@ describe('recordCurrentSnapshot', () => {
     };
 
     expect(await recordCurrentSnapshot()).toBeUndefined();
+  });
+});
+
+// Attribution is written at the only moment it can be: a recorded point sums every wallet's holding into
+// one figure, and once summed a wallet cannot be taken back out.
+describe('what a recorded snapshot remembers about wallets', () => {
+  const OWNER_B = '0x2222222222222222222222222222222222222222';
+
+  const withTwoWallets = () => {
+    const input = withEthOnChainAndOnKraken();
+
+    return {
+      ...input,
+      balances: [
+        ...input.balances,
+        {
+          id: `1:${OWNER_B}:${NATIVE}`,
+          chainId: 1,
+          owner: OWNER_B,
+          token: NATIVE,
+          standard: 'erc20' as const,
+          amount: '2000000000000000000',
+          updatedAt: 0,
+        },
+      ],
+    };
+  };
+
+  it('records which wallet contributed what', async () => {
+    aggregationInput = withTwoWallets();
+    await recordCurrentSnapshot(1_000);
+
+    const [snapshot] = put.mock.calls[0];
+    const chainPosition = snapshot.positions.find((position: SnapshotPosition) => position.kind === 'token');
+
+    expect(chainPosition.amountByOwner).toEqual({ [OWNER.toLowerCase()]: 4, [OWNER_B.toLowerCase()]: 2 });
+  });
+
+  it('splits the amount it actually recorded, so a wallet can be taken back out of it', async () => {
+    aggregationInput = withTwoWallets();
+    await recordCurrentSnapshot(1_000);
+
+    const [snapshot] = put.mock.calls[0];
+    const chainPosition = snapshot.positions.find((position: SnapshotPosition) => position.kind === 'token');
+    const attributed = Object.values(chainPosition.amountByOwner as Record<string, number>).reduce(
+      (total, amount) => total + amount,
+      0,
+    );
+
+    expect(attributed).toBeCloseTo(chainPosition.amount);
+  });
+
+  // An exchange holding belongs to an account and a hand-entered one to nobody, so neither is affected by
+  // which wallets are tracked and neither carries a split.
+  it('leaves exchange positions unattributed', async () => {
+    aggregationInput = withTwoWallets();
+    await recordCurrentSnapshot(1_000);
+
+    const [snapshot] = put.mock.calls[0];
+    const exchangePosition = snapshot.positions.find((position: SnapshotPosition) => position.kind === 'exchange');
+
+    expect(exchangePosition.amountByOwner).toBeUndefined();
   });
 });

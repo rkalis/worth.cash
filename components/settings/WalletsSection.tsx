@@ -9,6 +9,7 @@ import { useState } from 'react';
 import { getAddress } from 'viem';
 
 const WalletsSection = () => {
+  const [confirmingAddress, setConfirmingAddress] = useState<string>();
   const { wallets, addWallet, removeWallet, setWalletEnabled, setWalletLabel } = useWallets();
   const [address, setAddress] = useState('');
   const [label, setLabel] = useState('');
@@ -84,9 +85,34 @@ const WalletsSection = () => {
                 added {formatRelativeTime(wallet.addedAt)}
               </span>
 
-              <Button variant="danger" size="sm" onClick={() => removeWallet(wallet.address)}>
-                Remove
-              </Button>
+              {/* Two steps, because this is not reversible: removing a wallet deletes its balances, its
+                  transfer events, its sync cursors and its NFTs from this browser, and with them any way of
+                  working out what it held in the past. */}
+              {confirmingAddress === wallet.address ? (
+                <div className="flex items-center gap-2 shrink-0">
+                  <span className="text-[11px] text-zinc-600 dark:text-zinc-400 hidden sm:block max-w-64">
+                    Deletes this wallet's synced data. Snapshots that recorded which wallets they measured can be
+                    corrected from the History page; older ones will keep counting it.
+                  </span>
+                  <Button
+                    variant="danger"
+                    size="sm"
+                    onClick={() => {
+                      removeWallet(wallet.address);
+                      setConfirmingAddress(undefined);
+                    }}
+                  >
+                    Confirm
+                  </Button>
+                  <Button variant="tertiary" size="sm" onClick={() => setConfirmingAddress(undefined)}>
+                    Cancel
+                  </Button>
+                </div>
+              ) : (
+                <Button variant="danger" size="sm" onClick={() => setConfirmingAddress(wallet.address)}>
+                  Remove
+                </Button>
+              )}
             </li>
           ))}
         </ul>

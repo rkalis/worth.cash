@@ -3,6 +3,7 @@ import { SupportType } from 'lib/chains/Chain';
 import { db } from 'lib/db';
 import { blockMarkerKey } from 'lib/db/keys';
 import { explorerRequest } from 'lib/events/getters/EtherscanEventGetter';
+import { mapAsyncBounded } from 'lib/utils/promises';
 import { SECOND } from 'lib/utils/time';
 
 interface BlockNumberResponse {
@@ -130,4 +131,34 @@ const measureChainAnchors = async (chainId: number): Promise<ChainAnchors | unde
   } catch {
     return undefined;
   }
+};
+
+const BLOCK_RESOLUTION_CONCURRENCY = 4;
+
+// The block current at each of a list of moments, per chain.
+//
+// Lives here rather than beside its first caller because both the single-moment reconstruction and the
+// wallet-scope reprocess need it. Resolutions are cached permanently by (chain, timestamp), so a second run
+// over the same moments costs nothing.
+export const resolveBlocksForTimestamps = async (
+  chainIds: number[],
+  timestamps: number[],
+  onProgress?: (completed: number, total: number) => void,
+): Promise<Map<number, number[]>> => {
+  const blocksByChain = new Map<number, number[]>();
+  let completed = 0;
+
+  await mapAsyncBounded(chainIds, BLOCK_RESOLUTION_CONCURRENCY, async (chainId) => {
+    const blocks = await mapAsyncBounded(timestamps, 2, async (snapshotTimestamp) => {
+      const blockNumber = await resolveBlockAtTimestamp(chainId, snapshotTimestamp).catch(() => undefined);
+      // An unresolvable boundary is treated as "before this chain existed", which contributes nothing.
+      return blockNumber ?? 0;
+    });
+
+    blocksByChain.set(chainId, blocks);
+    completed += 1;
+    onProgress?.(completed, chainIds.length);
+  });
+
+  return blocksByChain;
 };

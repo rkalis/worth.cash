@@ -1,5 +1,6 @@
 'use client';
 
+import WalletScopeCard from 'components/history/WalletScopeCard';
 import SnapshotProgress from 'components/portfolio/SnapshotProgress';
 import ValueChart from 'components/portfolio/ValueChart';
 import Button from 'components/ui/Button';
@@ -153,6 +154,8 @@ const HistoryPage = () => {
 
         {result ? <ReconstructionSummary result={result} formatValue={formatValue} /> : null}
       </Card>
+
+      <WalletScopeCard />
 
       <Card title="Manual balances in history" bodyClassName="flex flex-col gap-3">
         <p className="text-xs text-zinc-600 dark:text-zinc-400">

@@ -11,13 +11,22 @@ import type {
   StoredTransferEvent,
 } from 'lib/db/schema';
 import { loadSettings } from 'lib/db/settings';
-import { resolveBlockAtTimestamp } from 'lib/history/blocks';
-import { type NativeBalanceSeries, readHistoricalNativeBalances } from 'lib/history/native-balances';
+import { resolveBlocksForTimestamps } from 'lib/history/blocks';
+import { readHistoricalNativeBalances } from 'lib/history/native-balances';
 import {
   createReconstructionProgress,
   type ReconstructionProgressListener,
   type ReconstructionProgressReporter,
 } from 'lib/history/progress';
+import {
+  type BalanceSeries,
+  buildExchangeBalanceSeries,
+  buildManualBalanceSeries,
+  buildNftPositionSeries,
+  buildTokenBalanceSeries,
+  keysHeldAt,
+  mergeNativeBalanceSeries,
+} from 'lib/history/series';
 import { amountAt, groupEntriesByBalance } from 'lib/manual/balances';
 import { fetchCoinGeckoNftFloorHistory } from 'lib/nfts/coingecko';
 import { resolveCoinGeckoIdsForSymbols } from 'lib/prices/assets';
@@ -34,6 +43,8 @@ import { deduplicateArray, groupBy } from 'lib/utils';
 import { mapAsyncBounded } from 'lib/utils/promises';
 import { DAY } from 'lib/utils/time';
 import { formatUnits, getAddress } from 'viem';
+
+export { mergeNativeBalanceSeries } from 'lib/history/series';
 
 export interface SnapshotReconstruction {
   // `created` is the only outcome that writes anything.
@@ -138,7 +149,11 @@ export const reconstructSnapshotAt = async (
 
   // Every chain that has any history, mapped to the block current at the requested moment.
   const chainIds = deduplicateArray(fungibleEvents.map((event) => event.chainId).map(String)).map(Number);
-  const blocksByChain = await resolveBlocksForTimestamps(chainIds, timestamps, progress);
+  progress.start('resolving-blocks', chainIds.length);
+  const blocksByChain = await resolveBlocksForTimestamps(chainIds, timestamps, (completed) =>
+    progress.advance('resolving-blocks', completed),
+  );
+  progress.complete('resolving-blocks');
 
   const tokens = await db.tokens.toArray();
   const tokensById = new Map(tokens.map((token) => [token.id, token]));
@@ -300,7 +315,12 @@ export const reconstructSnapshotAt = async (
   // Nothing held, or nothing that could be valued. A point worth zero is indistinguishable on the chart
   // from a portfolio that really was empty, which is the same reason recordCurrentSnapshot refuses one.
   const totalUsd = positions.reduce((total, position) => total + position.valueUsd, 0);
-  if (positions.length === 0 || totalUsd === 0) return { ...empty, status: 'no-holdings' };
+  if (positions.length === 0 || totalUsd === 0) {
+    // Reached in the middle of the valuing phase, so the step list has to be closed out or the UI sits on
+    // a phase that will never finish.
+    progress.skipRemaining();
+    return { ...empty, status: 'no-holdings' };
+  }
 
   const snapshot: StoredSnapshot = { timestamp, totalUsd, createdAt: Date.now(), positions };
 
@@ -348,200 +368,6 @@ const fetchExchangeHistory = async (
   progress.complete('exchange-history');
 };
 
-const resolveBlocksForTimestamps = async (
-  chainIds: number[],
-  timestamps: number[],
-  progress: ReconstructionProgressReporter,
-): Promise<Map<number, number[]>> => {
-  const blocksByChain = new Map<number, number[]>();
-  let completed = 0;
-
-  progress.start('resolving-blocks', chainIds.length);
-
-  await mapAsyncBounded(chainIds, BLOCK_RESOLUTION_CONCURRENCY, async (chainId) => {
-    const blocks = await mapAsyncBounded(timestamps, 2, async (snapshotTimestamp) => {
-      const blockNumber = await resolveBlockAtTimestamp(chainId, snapshotTimestamp).catch(() => undefined);
-      // An unresolvable boundary is treated as "before this chain existed", which contributes nothing.
-      return blockNumber ?? 0;
-    });
-
-    blocksByChain.set(chainId, blocks);
-    completed += 1;
-    progress.advance('resolving-blocks', completed);
-  });
-
-  progress.complete('resolving-blocks');
-  return blocksByChain;
-};
-
-interface BalanceSeries {
-  symbol: string;
-  // One entry per requested moment, in the same order as `timestamps`.
-  amounts: number[];
-}
-
-// Folds one chain's native balance history into the series for that coin.
-//
-// Summed rather than assigned, because every ETH rollup reports the same coin id: Base, Arbitrum and
-// Ethereum all arrive as `ethereum`. Assigning would leave the chart showing whichever chain happened to be
-// read last and silently understate the native holding.
-export const mergeNativeBalanceSeries = (
-  balanceSeries: Map<string, BalanceSeries>,
-  nativeSeries: Pick<NativeBalanceSeries, 'coingeckoId' | 'symbol' | 'amounts'>,
-): void => {
-  const key = coingeckoPriceKey(nativeSeries.coingeckoId);
-  const existing = balanceSeries.get(key);
-
-  if (!existing) {
-    balanceSeries.set(key, { symbol: nativeSeries.symbol, amounts: [...nativeSeries.amounts] });
-    return;
-  }
-
-  existing.amounts = existing.amounts.map((amount, index) => amount + (nativeSeries.amounts[index] ?? 0));
-};
-
-// Walks each token's events once in block order while advancing through the timestamps, rather than re-scanning
-// every event for every week. With hundreds of weeks and tens of thousands of events, the difference is
-// between a fast rebuild and one that locks the tab.
-const buildTokenBalanceSeries = (
-  events: StoredTransferEvent[],
-  timestamps: number[],
-  blocksByChain: Map<number, number[]>,
-  tokensById: Map<string, StoredToken>,
-): Map<string, BalanceSeries> => {
-  const series = new Map<string, BalanceSeries>();
-  const eventsByToken = groupBy(events, (event) => `${event.chainId}:${event.token}`);
-
-  for (const [tokenId, tokenEvents] of eventsByToken) {
-    const token = tokensById.get(tokenId);
-    if (!token || token.decimals === undefined || token.isSpam === 1) continue;
-
-    const chainBlocks = blocksByChain.get(tokenEvents[0].chainId);
-    if (!chainBlocks) continue;
-
-    const sorted = [...tokenEvents].sort((a, b) => a.blockNumber - b.blockNumber);
-
-    const amounts: number[] = [];
-    let runningBalance = 0n;
-    let eventIndex = 0;
-
-    for (let index = 0; index < timestamps.length; index += 1) {
-      const blockAtTimestamp = chainBlocks[index];
-
-      while (eventIndex < sorted.length && sorted[eventIndex].blockNumber <= blockAtTimestamp) {
-        const event = sorted[eventIndex];
-        const amount = BigInt(event.amount);
-
-        // A transfer to and from the same owner nets to zero, which falls out of applying both branches.
-        if (event.to === event.owner) runningBalance += amount;
-        if (event.from === event.owner) runningBalance -= amount;
-
-        eventIndex += 1;
-      }
-
-      // A negative running balance means we are missing an inbound transfer, so zero is the safer reading.
-      const clamped = runningBalance > 0n ? runningBalance : 0n;
-      amounts.push(Number(formatUnits(clamped, token.decimals)));
-    }
-
-    const priceKey =
-      token.address === NATIVE_TOKEN_ADDRESS.toLowerCase()
-        ? coingeckoPriceKey(
-            token.coingeckoId ?? getChainConfig(token.chainId as never)?.getNativeTokenCoingeckoId() ?? token.address,
-          )
-        : onChainPriceKey(token.chainId, token.address);
-
-    series.set(priceKey, { symbol: token.symbol ?? 'Unknown', amounts });
-  }
-
-  return series;
-};
-
-interface NftSeries {
-  name: string;
-  counts: number[];
-}
-
-const buildNftPositionSeries = (
-  events: StoredTransferEvent[],
-  timestamps: number[],
-  blocksByChain: Map<number, number[]>,
-  collectionNames: Map<string, string>,
-): Map<string, NftSeries> => {
-  const series = new Map<string, NftSeries>();
-  const nftEvents = events.filter((event) => event.standard === 'erc721' || event.standard === 'erc1155');
-  const eventsByCollection = groupBy(nftEvents, (event) => `${event.chainId}:${event.token}`);
-
-  for (const [collectionKey, collectionEvents] of eventsByCollection) {
-    const chainBlocks = blocksByChain.get(collectionEvents[0].chainId);
-    if (!chainBlocks) continue;
-
-    const sorted = [...collectionEvents].sort((a, b) => a.blockNumber - b.blockNumber);
-
-    const counts: number[] = [];
-    let runningCount = 0;
-    let eventIndex = 0;
-
-    for (let index = 0; index < timestamps.length; index += 1) {
-      const blockAtTimestamp = chainBlocks[index];
-
-      while (eventIndex < sorted.length && sorted[eventIndex].blockNumber <= blockAtTimestamp) {
-        const event = sorted[eventIndex];
-        const quantity = Number(event.amount || '1');
-
-        if (event.to === event.owner) runningCount += quantity;
-        if (event.from === event.owner) runningCount -= quantity;
-
-        eventIndex += 1;
-      }
-
-      counts.push(Math.max(0, runningCount));
-    }
-
-    // Falls back to the key only when we have never resolved a name for the collection, so a stored
-    // snapshot reads as "Pudgy Penguins" rather than "2741:0x0c99...".
-    series.set(collectionKey, { name: collectionNames.get(collectionKey) ?? collectionKey, counts });
-  }
-
-  return series;
-};
-
-const buildExchangeBalanceSeries = (
-  ledgerEntries: Array<{ asset: string; amount: string; timestamp: number }>,
-  timestamps: number[],
-): Map<string, BalanceSeries> => {
-  const series = new Map<string, BalanceSeries>();
-  const entriesByAsset = groupBy(ledgerEntries, (entry) => entry.asset);
-
-  for (const [asset, assetEntries] of entriesByAsset) {
-    const sorted = [...assetEntries].sort((a, b) => a.timestamp - b.timestamp);
-
-    const amounts: number[] = [];
-    let runningBalance = 0;
-    let entryIndex = 0;
-
-    for (const snapshotTimestamp of timestamps) {
-      while (entryIndex < sorted.length && sorted[entryIndex].timestamp <= snapshotTimestamp) {
-        const amount = Number(sorted[entryIndex].amount);
-        if (Number.isFinite(amount)) runningBalance += amount;
-        entryIndex += 1;
-      }
-
-      amounts.push(Math.max(0, runningBalance));
-    }
-
-    // Keyed by asset for now; the CoinGecko id is substituted once resolved, in fetchPriceSeries.
-    series.set(`exchange-asset:${asset}`, { symbol: asset, amounts });
-  }
-
-  return series;
-};
-
-const keysHeldAt = (series: Map<string, BalanceSeries>, dustThresholdAmount: number): string[] =>
-  [...series.entries()].filter(([, entry]) => entry.amounts[0] >= dustThresholdAmount).map(([priceKey]) => priceKey);
-
-// The price keys we already know CoinGecko has no price for.
-//
 // A current price is stored for every token held, including a null meaning "asked, and there is none". Both
 // keys a token can be priced under are checked: its coin id if CoinGecko lists it, and its own contract for
 // the on-chain pool price. A number under either means it is priced and worth asking about historically.
@@ -569,33 +395,6 @@ const findKnownUnpricedKeys = async (
       return candidates.some((price) => price === null);
     }),
   );
-};
-
-// One series per manual balance rather than per coin.
-//
-// Keyed by the balance id, not by `coingecko:${id}`, because a native token series already uses that key
-// shape: a manual ETH holding would land on top of the on-chain ETH series inside the same Map and one of
-// them would silently disappear. Two manual balances of the same coin in different places also stay
-// separate this way, which is what their locations mean.
-const buildManualBalanceSeries = (
-  balances: StoredManualBalance[],
-  entries: StoredManualLedgerEntry[],
-  timestamps: number[],
-): Map<string, BalanceSeries> => {
-  const entriesByBalance = groupEntriesByBalance(entries);
-  const series = new Map<string, BalanceSeries>();
-
-  for (const balance of balances) {
-    const balanceEntries = entriesByBalance.get(balance.id) ?? [];
-    if (balanceEntries.length === 0) continue;
-
-    series.set(`manual:${balance.id}`, {
-      symbol: balance.symbol.toUpperCase(),
-      amounts: timestamps.map((timestamp) => amountAt(balanceEntries, timestamp)),
-    });
-  }
-
-  return series;
 };
 
 interface PriceSources {

@@ -13,6 +13,7 @@ import type {
   StoredSetting,
   StoredToken,
   StoredTokenOverride,
+  StoredWallet,
 } from 'lib/db/schema';
 import { FIAT_RATES_SETTING_KEY, type StoredFiatRates } from 'lib/fiat/rates';
 import { buildManualHoldings } from 'lib/manual/balances';
@@ -33,6 +34,9 @@ export interface PortfolioSource {
   manualBalances: StoredManualBalance[];
   manualLedger: StoredManualLedgerEntry[];
   categoryAssignments: StoredCategoryAssignment[];
+  // Only the snapshot writer reads these, to record which wallets a point measured. Aggregation applies no
+  // wallet filter: `enabled` says whether to sync a wallet, not whether to count it.
+  wallets?: StoredWallet[];
   settingsRow?: StoredSetting;
   assetMapRow?: StoredSetting;
   fiatRatesRow?: StoredSetting;
@@ -59,6 +63,7 @@ export const loadPortfolioSource = async (): Promise<PortfolioSource> => {
     manualBalances,
     manualLedger,
     categoryAssignments,
+    wallets,
     settingsRow,
     assetMapRow,
     fiatRatesRow,
@@ -74,6 +79,7 @@ export const loadPortfolioSource = async (): Promise<PortfolioSource> => {
     db.manualBalances.toArray(),
     db.manualLedger.toArray(),
     db.categoryAssignments.toArray(),
+    db.wallets.toArray(),
     db.settings.get(PORTFOLIO_SETTINGS_KEY),
     db.settings.get(ASSET_MAP_SETTING_KEY),
     db.settings.get(FIAT_RATES_SETTING_KEY),
@@ -91,6 +97,7 @@ export const loadPortfolioSource = async (): Promise<PortfolioSource> => {
     manualBalances,
     manualLedger,
     categoryAssignments,
+    wallets,
     settingsRow,
     assetMapRow,
     fiatRatesRow,

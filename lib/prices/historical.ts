@@ -123,9 +123,12 @@ const fetchAndStoreSeries = async (
 };
 
 const loadCachedSeries = async (priceKey: string, window: HistoryWindow): Promise<HistoricalPriceSeries> => {
+  // Points are stored bucketed to the start of their UTC day, so the bucket covering a window that opens
+  // at, say, 09:00 is stamped at 00:00 and falls outside a range starting at the window itself. Reading
+  // from the start of that day is what makes a cached price for the requested moment findable at all.
   const stored = await db.historicalPrices
     .where('[priceKey+timestamp]')
-    .between([priceKey, window.from], [priceKey, window.to])
+    .between([priceKey, startOfUtcDay(window.from)], [priceKey, window.to])
     .toArray();
 
   return {

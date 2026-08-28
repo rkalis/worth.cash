@@ -178,4 +178,54 @@ describe('reprocessManualBalances', () => {
     const [, , window] = fetchHistoricalSeriesForCoin.mock.calls[0];
     expect(window).toMatchObject({ from: NOW - 30 * DAY, to: NOW - 5 * DAY });
   });
+
+  // A snapshot taken while the balance already existed recorded the spot price of that moment. Replacing it
+  // with a daily historical point is the same trade this module refuses to make with on-chain figures.
+  describe('the price a rebuilt manual holding is valued at', () => {
+    const manualPosition = (priceKey: string, priceUsd: number | null) => ({
+      priceKey,
+      symbol: 'BTC',
+      amount: 0.5,
+      priceUsd,
+      valueUsd: priceUsd === null ? 0 : 0.5 * priceUsd,
+      kind: 'manual' as const,
+    });
+
+    it('keeps the price the snapshot recorded rather than re-fetching one', async () => {
+      // Filed under the asset's identity, which is how recordCurrentSnapshot writes it.
+      snapshots = [snapshot(10, [chainPosition(2000), manualPosition('coin:bitcoin', 64_000)])];
+
+      await reprocessManualBalances();
+
+      const [written] = bulkPut.mock.calls[0][0] as StoredSnapshot[];
+      const manual = written.positions.find((position) => position.kind === 'manual');
+
+      expect(manual?.priceUsd).toBe(64_000);
+      expect(manual?.valueUsd).toBe(32_000);
+    });
+
+    it('falls back to the historical price when the point never held it', async () => {
+      snapshots = [snapshot(10, [chainPosition(2000)])];
+
+      await reprocessManualBalances();
+
+      const [written] = bulkPut.mock.calls[0][0] as StoredSnapshot[];
+      const manual = written.positions.find((position) => position.kind === 'manual');
+
+      expect(manual?.priceUsd).toBe(60_000);
+    });
+
+    // A position previously written with no price is a question that was asked and not answered, not an
+    // answer of "no price", so it gets asked again.
+    it('asks again about a holding that was left unpriced', async () => {
+      snapshots = [snapshot(10, [chainPosition(2000), manualPosition('manual:balance-1', null)])];
+
+      await reprocessManualBalances();
+
+      const [written] = bulkPut.mock.calls[0][0] as StoredSnapshot[];
+      const manual = written.positions.find((position) => position.kind === 'manual');
+
+      expect(manual?.priceUsd).toBe(60_000);
+    });
+  });
 });

@@ -20,7 +20,10 @@ const URI_BATCH_SIZE = 50;
 // Metadata lives on arbitrary third-party hosts and IPFS gateways, both of which are frequently slow. This
 // caps how many we wait on at once and how long any single one can hold up the batch.
 const METADATA_FETCH_CONCURRENCY = 8;
-const METADATA_FETCH_TIMEOUT = 10_000;
+// Must outlast the server's worst case, which walks three gateways at up to six seconds each. A shorter
+// budget here made the browser abandon requests the server then completed a second later, so every
+// document cost two full server round trips and still arrived as a failure.
+const METADATA_FETCH_TIMEOUT = 20_000;
 
 // Fetches artwork and names for NFTs we hold but have no metadata for yet.
 //
@@ -31,6 +34,30 @@ export const syncNftMetadata = async (chainId: number, owner: Address, limit = 1
   const items = await db.nftItems.where('[chainId+owner]').equals([chainId, owner.toLowerCase()]).toArray();
   const itemsNeedingMetadata = items.filter((item) => !item.imageUrl && !item.name).slice(0, limit);
 
+  return fetchMetadataForItems(chainId, itemsNeedingMetadata);
+};
+
+// Items already attempted this session, so a card re-rendering does not re-ask dead hosts about the same
+// items forever. Session-scoped on purpose: an item whose metadata host was down yesterday deserves
+// another try tomorrow, and nothing durable should record a transient failure as an answer.
+const attemptedItemIds = new Set<string>();
+
+// Fetches artwork for the items a collection card is actually showing.
+//
+// This is the other half of the bounded sync above: a sync tops up a hundred items per wallet per chain,
+// which across a thousand collections leaves most artwork unfetched, and the card the user has scrolled to
+// is exactly the place the missing hundred-and-first belongs. Bounded to what is on screen, deduplicated
+// per session, and safe to call on every render.
+export const topUpNftMetadata = async (chainId: number, items: StoredNftItem[]): Promise<number> => {
+  const missing = items.filter((item) => !item.imageUrl && !attemptedItemIds.has(item.id));
+  if (missing.length === 0) return 0;
+
+  for (const item of missing) attemptedItemIds.add(item.id);
+
+  return fetchMetadataForItems(chainId, missing);
+};
+
+const fetchMetadataForItems = async (chainId: number, itemsNeedingMetadata: StoredNftItem[]): Promise<number> => {
   if (itemsNeedingMetadata.length === 0) return 0;
 
   const uris = await readTokenUris(chainId, itemsNeedingMetadata);

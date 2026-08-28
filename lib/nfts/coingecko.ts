@@ -44,15 +44,12 @@ export interface CoinGeckoNftCollection {
 
 // Looks up a collection by chain and contract address.
 //
-// This is a better primary source than OpenSea for the collections it has. It is one request rather than
-// two (OpenSea needs a contract-to-slug lookup first), it reuses the CoinGecko key that token pricing
-// already requires rather than needing a separate hard-to-obtain one, and crucially it returns the floor
-// price already converted to USD, so we do not have to maintain a table mapping every possible quote
-// currency to its own price feed.
+// One request, it reuses the CoinGecko key that token pricing already requires, and crucially it returns
+// the floor price already converted to USD, so we do not have to maintain a table mapping every possible
+// quote currency to its own price feed.
 //
 // The catch is coverage: CoinGecko lists on the order of two thousand collections, which is the blue-chip
-// end of the market. OpenSea indexes orders of magnitude more, which is why it remains the fallback rather
-// than being replaced.
+// end of the market. The long tail beyond them simply has no floor here.
 export const fetchCoinGeckoNftCollection = async (
   chainId: number,
   contractAddress: Address,

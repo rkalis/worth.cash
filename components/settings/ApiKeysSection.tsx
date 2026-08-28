@@ -1,6 +1,7 @@
 'use client';
 
 import Card from 'components/ui/Card';
+import InfoTooltip from 'components/ui/InfoTooltip';
 import Input from 'components/ui/Input';
 import { useSettings } from 'lib/hooks/useSettings';
 import type { ProviderApiKeys } from 'lib/settings/types';
@@ -25,12 +26,6 @@ const KEY_DEFINITIONS: KeyDefinition[] = [
     label: 'CoinGecko',
     placeholder: 'Demo or Pro API key',
     hint: 'Used for all prices, including NFT floors. The plan is detected automatically; free and demo plans cap historical data at 365 days and cannot fetch historical NFT floors at all.',
-  },
-  {
-    key: 'opensea',
-    label: 'OpenSea',
-    placeholder: 'OpenSea API key',
-    hint: 'Extends NFT floor prices beyond the ~2,000 collections CoinGecko indexes. Without it, blue-chip collections are still valued via CoinGecko; the long tail is not.',
   },
   {
     key: 'hypersync',
@@ -66,12 +61,15 @@ const ApiKeysSection = () => {
   };
 
   return (
-    <Card title="API keys" bodyClassName="flex flex-col gap-4">
-      <p className="text-xs text-zinc-500">
-        Every key is optional and stored only in this browser. The app uses whichever data sources the keys you provide
-        allow, and degrades rather than failing when one is missing.
-      </p>
-
+    <Card
+      title={
+        <h2 className="text-sm font-semibold flex items-center gap-1.5">
+          API keys
+          <InfoTooltip tooltip="Every key is optional and stored only in this browser. The app uses whichever data sources your keys allow, and degrades rather than failing when one is missing." />
+        </h2>
+      }
+      bodyClassName="flex flex-col gap-4"
+    >
       <div className="grid gap-4 sm:grid-cols-2">
         {KEY_DEFINITIONS.map((definition) => (
           <Input
@@ -79,7 +77,7 @@ const ApiKeysSection = () => {
             name={`api-key-${definition.key}`}
             label={definition.label}
             placeholder={definition.placeholder}
-            hint={definition.hint}
+            tooltip={definition.hint}
             monospace
             // These are credentials, so they are masked like passwords rather than left in plain sight.
             type="password"

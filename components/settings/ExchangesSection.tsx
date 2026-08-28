@@ -3,6 +3,7 @@
 import Badge from 'components/ui/Badge';
 import Button from 'components/ui/Button';
 import Card from 'components/ui/Card';
+import InfoTooltip from 'components/ui/InfoTooltip';
 import Input from 'components/ui/Input';
 import type { ExchangeKind } from 'lib/db/schema';
 import { useExchangeAccounts } from 'lib/hooks/useExchangeAccounts';
@@ -43,12 +44,16 @@ const ExchangesSection = () => {
   };
 
   return (
-    <Card title="Exchange accounts" bodyClassName="flex flex-col gap-4">
-      <p className="text-xs text-zinc-500">
-        Use read-only keys. Requests are signed by this app's own server route because both exchanges require a
-        signature that cannot be produced in the browser, and the credentials are sent with each request rather than
-        stored on the server.
-      </p>
+    <Card
+      title={
+        <h2 className="text-sm font-semibold flex items-center gap-1.5">
+          Exchange accounts
+          <InfoTooltip tooltip="Requests are signed by this app's own server route, because both exchanges require a signature the browser cannot produce. Credentials are sent with each request rather than stored on the server." />
+        </h2>
+      }
+      bodyClassName="flex flex-col gap-4"
+    >
+      <p className="text-xs text-zinc-500">Use read-only keys.</p>
 
       <div className="flex gap-1">
         {(['coinbase', 'kraken'] as const).map((option) => (

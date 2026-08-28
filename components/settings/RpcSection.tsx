@@ -3,6 +3,7 @@
 import Button from 'components/ui/Button';
 import Card from 'components/ui/Card';
 import ChainLogo from 'components/ui/ChainLogo';
+import InfoTooltip from 'components/ui/InfoTooltip';
 import Input from 'components/ui/Input';
 import { chainIdSorter, getChainName, SUPPORTED_CHAINS } from 'lib/chains';
 import { useSettings } from 'lib/hooks/useSettings';
@@ -68,13 +69,15 @@ const RpcSection = () => {
   };
 
   return (
-    <Card title="Custom RPC endpoints" bodyClassName="flex flex-col gap-4">
-      <p className="text-xs text-zinc-500">
-        A custom endpoint replaces the built-in one for that chain. Worth setting where you have a paid endpoint, and
-        required for historical balance charts, since reconstructing past native balances needs an archive node that
-        most public RPCs are not.
-      </p>
-
+    <Card
+      title={
+        <h2 className="text-sm font-semibold flex items-center gap-1.5">
+          Custom RPC endpoints
+          <InfoTooltip tooltip="Replaces the built-in endpoint for that chain. Worth setting where you have a paid endpoint, and required for historical balance charts, since reconstructing past native balances needs an archive node." />
+        </h2>
+      }
+      bodyClassName="flex flex-col gap-4"
+    >
       <div className="grid gap-3 sm:grid-cols-2">
         <div>
           <Input

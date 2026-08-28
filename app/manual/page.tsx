@@ -4,6 +4,7 @@ import ManualBalanceRow from 'components/manual/ManualBalanceRow';
 import Button from 'components/ui/Button';
 import Card from 'components/ui/Card';
 import EmptyState from 'components/ui/EmptyState';
+import InfoTooltip from 'components/ui/InfoTooltip';
 import Input from 'components/ui/Input';
 import Spinner from 'components/ui/Spinner';
 import { getChainName, SUPPORTED_CHAINS } from 'lib/chains';
@@ -23,6 +24,7 @@ const ManualBalancesPage = () => {
     setBalanceEnabled,
     removeBalance,
     addEntry,
+    updateEntry,
     removeEntry,
     isLoading,
   } = useManualBalances();
@@ -119,11 +121,9 @@ const ManualBalancesPage = () => {
       </div>
 
       <Card bodyClassName="flex flex-col gap-4">
-        <p className="text-xs text-zinc-600 dark:text-zinc-400">
-          For holdings this app cannot discover on its own: Bitcoin, Solana, a hardware wallet, anything on a chain that
-          is not supported. Record what you bought and sold and when, and the balance follows from that, so your history
-          accounts for it the same way a synced wallet does. Give it a CoinGecko coin id and it joins the row for that
-          asset in your portfolio, listed alongside wherever else you hold it.
+        <p className="text-xs text-zinc-600 dark:text-zinc-400 flex items-center gap-1.5">
+          For holdings the app cannot see on its own: Bitcoin, Solana, a hardware wallet.
+          <InfoTooltip tooltip="Record what you bought and sold and when, and the balance follows from the ledger, so your history accounts for it like a synced wallet. Give it a CoinGecko coin id and it joins the row for that asset in your portfolio, alongside wherever else you hold it." />
         </p>
 
         <div className="flex flex-wrap items-end gap-3">
@@ -173,7 +173,7 @@ const ManualBalancesPage = () => {
             />
           </div>
 
-          <Button variant="primary" size="sm" onClick={submit}>
+          <Button variant="primary" onClick={submit}>
             Add balance
           </Button>
         </div>
@@ -199,6 +199,7 @@ const ManualBalancesPage = () => {
               onToggle={setBalanceEnabled}
               onRemove={removeBalance}
               onAddEntry={addEntry}
+              onUpdateEntry={updateEntry}
               onRemoveEntry={removeEntry}
             />
           ))}

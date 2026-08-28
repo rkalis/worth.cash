@@ -1,21 +1,29 @@
 'use client';
 
+import InfoTooltip from 'components/ui/InfoTooltip';
 import { cn } from 'lib/utils/classnames';
 import type { InputHTMLAttributes, ReactNode } from 'react';
 
 interface Props extends InputHTMLAttributes<HTMLInputElement> {
   label?: string;
   hint?: ReactNode;
+  // Detail worth having but not worth a hint line under the field.
+  tooltip?: ReactNode;
   error?: string;
   monospace?: boolean;
 }
 
-const Input = ({ label, hint, error, monospace, className, id, ...props }: Props) => {
+const Input = ({ label, hint, tooltip, error, monospace, className, id, ...props }: Props) => {
   const inputId = id ?? props.name;
 
   return (
     <label className="block" htmlFor={inputId}>
-      {label ? <span className="block text-xs font-medium text-zinc-600 dark:text-zinc-400 mb-1">{label}</span> : null}
+      {label ? (
+        <span className="flex items-center gap-1.5 text-xs font-medium text-zinc-600 dark:text-zinc-400 mb-1">
+          {label}
+          {tooltip ? <InfoTooltip tooltip={tooltip} /> : null}
+        </span>
+      ) : null}
       <input
         id={inputId}
         className={cn(

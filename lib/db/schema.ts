@@ -122,7 +122,6 @@ export interface StoredNftCollection {
   name?: string;
   symbol?: string;
   imageUrl?: string;
-  openseaSlug?: string;
   // CoinGecko's own collection id, when it has one. Needed for historical floor prices, which are keyed by
   // it rather than by contract address.
   coingeckoNftId?: string;
@@ -135,7 +134,6 @@ export interface StoredNftCollection {
   floorPriceCurrency?: string;
   floorPriceUsd?: number;
   // Which source the current floor came from, so the UI can be honest about where a valuation originated.
-  floorPriceSource?: 'coingecko' | 'opensea';
   floorPriceUpdatedAt?: number;
   metadataUpdatedAt: number;
 }

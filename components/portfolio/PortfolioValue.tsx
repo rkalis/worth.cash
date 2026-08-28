@@ -9,6 +9,7 @@ import {
   type ChartRange,
   filterPointsByRange,
   type PeriodChange,
+  withLivePoint,
 } from 'lib/history/periods';
 import { useCurrency } from 'lib/hooks/useCurrency';
 import type { SnapshotPoint } from 'lib/hooks/useSnapshots';
@@ -30,9 +31,15 @@ const PortfolioValue = ({ totalUsd, points }: Props) => {
   const [range, setRange] = useState<ChartRange>('all');
 
   const changes = useMemo(() => buildPeriodChanges(points, totalUsd), [points, totalUsd]);
-  const visiblePoints = useMemo(() => filterPointsByRange(points, range), [points, range]);
 
-  const hasChart = points.length >= 2;
+  // Filtered first, then extended: "now" belongs to every range, including one whose recorded points have
+  // all fallen out of it.
+  const visiblePoints = useMemo(
+    () => withLivePoint(filterPointsByRange(points, range), totalUsd),
+    [points, range, totalUsd],
+  );
+
+  const hasChart = withLivePoint(points, totalUsd).length >= 2;
 
   return (
     <div className="border border-zinc-200 dark:border-zinc-800 rounded-xl">

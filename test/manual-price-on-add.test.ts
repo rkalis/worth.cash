@@ -13,6 +13,8 @@ vi.mock('lib/db', () => ({
   db: {
     manualBalances: { toArray: async () => [], put: (row: unknown) => put(row), get: (id: string) => get(id) },
     manualLedger: { toArray: async () => [], put: vi.fn() },
+    // updateBalance holds one transaction from read to write; the mock just runs the body.
+    transaction: async (_mode: string, _table: unknown, run: () => Promise<unknown>) => run(),
   },
 }));
 

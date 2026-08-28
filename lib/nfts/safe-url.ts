@@ -35,31 +35,38 @@ export const parseSafeUrl = (value: string): URL | undefined => {
   }
 };
 
-// Follows a single redirect by hand, re-checking the destination. Letting fetch follow redirects itself
-// would allow a public URL to bounce the request onto a private one, defeating the check above.
+// Follows redirects by hand, re-checking every destination. Letting fetch follow redirects itself would
+// allow a public URL to bounce the request onto a private one, defeating the check above.
+//
+// A short chain rather than a single hop: IPFS gateways redirect path-style URLs to their subdomain form,
+// and some public gateways are fronts that bounce through a second gateway before that, so two or three
+// legitimate hops are routine.
+const MAX_REDIRECTS = 3;
+
 export const fetchWithGuardedRedirect = async (
   target: URL,
   init: RequestInit & { timeoutMs: number },
 ): Promise<Response> => {
   const { timeoutMs, ...requestInit } = init;
+  let currentTarget = target;
 
-  const response = await fetch(target, {
-    ...requestInit,
-    redirect: 'manual',
-    signal: AbortSignal.timeout(timeoutMs),
-  });
+  for (let hop = 0; hop <= MAX_REDIRECTS; hop += 1) {
+    const response = await fetch(currentTarget, {
+      ...requestInit,
+      redirect: 'manual',
+      signal: AbortSignal.timeout(timeoutMs),
+    });
 
-  if (response.status < 300 || response.status >= 400) return response;
+    if (response.status < 300 || response.status >= 400) return response;
 
-  const location = response.headers.get('location');
-  if (!location) throw new Error('Redirect without a location');
+    const location = response.headers.get('location');
+    if (!location) throw new Error('Redirect without a location');
 
-  const redirectTarget = new URL(location, target);
-  if (isBlockedUrl(redirectTarget)) throw new Error('Refusing to follow that redirect');
+    const redirectTarget = new URL(location, currentTarget);
+    if (isBlockedUrl(redirectTarget)) throw new Error('Refusing to follow that redirect');
 
-  return fetch(redirectTarget, {
-    ...requestInit,
-    redirect: 'error',
-    signal: AbortSignal.timeout(timeoutMs),
-  });
+    currentTarget = redirectTarget;
+  }
+
+  throw new Error('Too many redirects');
 };

@@ -1,7 +1,7 @@
 'use client';
 
 import Button from 'components/ui/Button';
-import Card from 'components/ui/Card';
+import InfoTooltip from 'components/ui/InfoTooltip';
 import { getChainName } from 'lib/chains';
 import { formatDateTimeUtc } from 'lib/format';
 import { reprocessWalletScope, type WalletScopeProgress, type WalletScopeResult } from 'lib/history/rescope';
@@ -16,8 +16,15 @@ const PHASE_LABELS: Record<WalletScopeProgress['phase'], string> = {
   'updating-snapshots': 'Updating snapshots',
 };
 
+interface Props {
+  // True while the card's other reprocess runs. Both rewrite the same snapshot rows, and racing them means
+  // whichever writes last silently discards the other's work.
+  disabled: boolean;
+  onRunningChange: (isRunning: boolean) => void;
+}
+
 // Makes the recorded history measure the wallets tracked today.
-const WalletScopeCard = () => {
+const WalletScopeSection = ({ disabled, onRunningChange }: Props) => {
   const drift = useWalletScopeDrift();
   const { formatValue } = useCurrency();
 
@@ -30,6 +37,7 @@ const WalletScopeCard = () => {
 
   const run = async (dryRun: boolean) => {
     setIsRunning(true);
+    onRunningChange(true);
     setError(undefined);
     setResult(undefined);
     setProgress(undefined);
@@ -41,25 +49,28 @@ const WalletScopeCard = () => {
       setError(runError instanceof Error ? runError.message : String(runError));
     } finally {
       setIsRunning(false);
+      onRunningChange(false);
       setProgress(undefined);
     }
   };
 
   return (
-    <Card title="Wallets in history" bodyClassName="flex flex-col gap-3">
-      <p className="text-xs text-zinc-600 dark:text-zinc-400">
-        A snapshot records what was found, not what was looked at, so points taken before you added a wallet know
-        nothing about it and the first sync afterwards draws a step that looks like a gain. Points recorded since the
-        app started noting which wallets they measured can have one taken back out exactly, at the price they already
-        recorded. Older points can only be corrected by replaying your stored transfer events, which is approximate for
-        rebasing and fee-on-transfer tokens and needs an archive-capable RPC for native balances. It never adds a
-        snapshot and never removes one, and it leaves exchange and manual figures alone.
-      </p>
+    <div className="flex flex-col gap-3">
+      <h3 className="text-sm font-medium flex items-center gap-1.5">
+        Tracked wallets
+        <InfoTooltip tooltip="Corrects which wallets each point counts. Points recorded since the app began noting who contributed what can have a wallet added or removed exactly; older ones can only be corrected by replaying stored transfer events, which is approximate for rebasing and fee-on-transfer tokens and needs an archive-capable RPC for native balances." />
+      </h3>
 
       {drift.isLoading ? null : <DriftLine drift={drift} />}
 
       <div className="flex flex-wrap items-center gap-2">
-        <Button variant="secondary" size="sm" onClick={() => run(true)} loading={isRunning} disabled={isRunning}>
+        <Button
+          variant="secondary"
+          size="sm"
+          onClick={() => run(true)}
+          loading={isRunning}
+          disabled={disabled || isRunning}
+        >
           Preview changes
         </Button>
 
@@ -69,10 +80,10 @@ const WalletScopeCard = () => {
           variant="primary"
           size="sm"
           onClick={() => run(false)}
-          disabled={isRunning || !hasPreviewed}
+          disabled={disabled || isRunning || !hasPreviewed}
           title={hasPreviewed ? undefined : 'Preview the changes first'}
         >
-          Update existing snapshots
+          Update snapshots
         </Button>
       </div>
 
@@ -86,10 +97,9 @@ const WalletScopeCard = () => {
           }}
           className="mt-0.5"
         />
-        <span>
-          Rebuild every snapshot, including ones that look correctly scoped. The only way to correct a wallet you
-          removed before the app started recording which wallets each point measured, and the only option that replaces
-          balances read from the chain with balances replayed from stored events.
+        <span className="flex items-center gap-1.5">
+          Rebuild every snapshot, even ones that look correctly scoped
+          <InfoTooltip tooltip="The only way to correct a wallet you removed before the app started recording which wallets each point measured. Replaces balances read from the chain with balances replayed from stored events." />
         </span>
       </label>
 
@@ -102,7 +112,7 @@ const WalletScopeCard = () => {
       {error ? <p className="text-xs text-red-600 dark:text-red-400">{error}</p> : null}
 
       {result ? <WalletScopeSummary result={result} formatValue={formatValue} /> : null}
-    </Card>
+    </div>
   );
 };
 
@@ -221,4 +231,4 @@ const WalletScopeSummary = ({ result, formatValue }: SummaryProps) => {
   );
 };
 
-export default WalletScopeCard;
+export default WalletScopeSection;

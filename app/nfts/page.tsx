@@ -3,16 +3,14 @@
 import CollectionCard from 'components/nfts/CollectionCard';
 import Card from 'components/ui/Card';
 import EmptyState from 'components/ui/EmptyState';
+import InfoTooltip from 'components/ui/InfoTooltip';
 import Spinner from 'components/ui/Spinner';
 import { useCurrency } from 'lib/hooks/useCurrency';
 import { usePortfolio } from 'lib/hooks/usePortfolio';
-import { useSettings } from 'lib/hooks/useSettings';
-import Link from 'next/link';
 
 const NftsPage = () => {
   const portfolio = usePortfolio();
   const { formatValue } = useCurrency();
-  const { settings } = useSettings();
 
   if (portfolio.isLoading) {
     return (
@@ -36,19 +34,10 @@ const NftsPage = () => {
 
       {collectionsWithoutFloor.length > 0 ? (
         <Card>
-          <p className="text-xs text-zinc-600 dark:text-zinc-400">
+          <p className="text-xs text-zinc-600 dark:text-zinc-400 flex items-center gap-1.5 flex-wrap">
             {collectionsWithoutFloor.length} collection{collectionsWithoutFloor.length === 1 ? ' has' : 's have'} no
-            floor price. Floors come from CoinGecko first, which indexes around two thousand collections, and then from
-            OpenSea, which covers far more but only on the chains it runs a marketplace on.
-            {!settings.apiKeys.opensea ? (
-              <>
-                {' '}
-                <Link href="/settings" className="underline">
-                  Adding an OpenSea API key
-                </Link>{' '}
-                would cover most of the remainder.
-              </>
-            ) : null}
+            floor price.
+            <InfoTooltip tooltip="Floors come from CoinGecko, which indexes around two thousand collections; anything outside them has no floor to value it by and is counted at nothing." />
           </p>
         </Card>
       ) : null}

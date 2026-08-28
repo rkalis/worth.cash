@@ -1,5 +1,4 @@
 import { ChainId, getChain } from '@revoke.cash/chains';
-import { getOpenSeaChainSlug } from 'lib/chains/opensea';
 import { getApiKey, getRuntimeSettings } from 'lib/settings/runtime';
 import type { EtherscanPlatform, RateLimit } from 'lib/types';
 import { isNullish } from 'lib/utils';
@@ -201,11 +200,6 @@ export class Chain {
   // The CoinGecko on-chain (GeckoTerminal) network identifier, used to price tokens by contract address.
   getCoingeckoNetworkId(): string | undefined {
     return this.options.coingeckoNetworkId;
-  }
-
-  // Backed by the OpenSea slug map rather than by per-chain config, since only ~20 chains have one.
-  getOpenSeaChainSlug(): string | undefined {
-    return getOpenSeaChainSlug(this.chainId);
   }
 
   getEtherscanCompatibleApiUrl(): string | undefined {

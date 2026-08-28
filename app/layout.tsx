@@ -5,8 +5,24 @@ import Providers from './providers';
 import './globals.css';
 
 export const metadata: Metadata = {
-  title: 'Portfolio Tracker',
-  description: 'Self-hosted multichain crypto portfolio tracker. All data stays in your browser.',
+  // The base every relative metadata URL resolves against, which is what makes the OG image an absolute
+  // URL in the emitted tags. Scrapers refuse relative ones.
+  metadataBase: new URL('https://worth.cash'),
+  title: 'Worth.cash',
+  description:
+    'What your crypto is worth, wherever it is. Self-hosted and multichain, and all data stays in your browser.',
+  openGraph: {
+    title: 'Worth.cash',
+    description: 'What your crypto is worth, wherever it is.',
+    url: '/',
+    siteName: 'Worth.cash',
+    type: 'website',
+  },
+  // The image itself comes from the app/opengraph-image.png file convention; this only picks the large
+  // card so the unfurl shows it full-width rather than as a thumbnail.
+  twitter: {
+    card: 'summary_large_image',
+  },
 };
 
 // Applies the saved theme before first paint. Doing this in an effect instead would show a flash of the

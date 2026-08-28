@@ -2,6 +2,7 @@
 
 import Button from 'components/ui/Button';
 import Card from 'components/ui/Card';
+import InfoTooltip from 'components/ui/InfoTooltip';
 import { useLiveQuery } from 'dexie-react-hooks';
 import { clearSyncedData, db } from 'lib/db';
 import { useState } from 'react';
@@ -31,12 +32,15 @@ const DataSection = () => {
   };
 
   return (
-    <Card title="Local data" bodyClassName="flex flex-col gap-3">
-      <p className="text-xs text-zinc-500">
-        Everything lives in this browser's IndexedDB. Nothing is sent anywhere except to the APIs whose keys you
-        configured, and clearing your browser data removes all of it.
-      </p>
-
+    <Card
+      title={
+        <h2 className="text-sm font-semibold flex items-center gap-1.5">
+          Local data
+          <InfoTooltip tooltip="Everything lives in this browser's IndexedDB. Nothing is sent anywhere except to the APIs whose keys you configured, and clearing your browser data removes all of it." />
+        </h2>
+      }
+      bodyClassName="flex flex-col gap-3"
+    >
       {counts ? (
         <dl className="grid grid-cols-2 sm:grid-cols-4 gap-3 text-center">
           <Stat label="Transfer events" value={counts.events} />

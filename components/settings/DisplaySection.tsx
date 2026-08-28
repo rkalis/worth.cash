@@ -1,6 +1,7 @@
 'use client';
 
 import Card from 'components/ui/Card';
+import InfoTooltip from 'components/ui/InfoTooltip';
 import { CURRENCY_LABELS, DISPLAY_CURRENCIES, type DisplayCurrency } from 'lib/fiat/rates';
 import { useCurrency } from 'lib/hooks/useCurrency';
 import { useSettings } from 'lib/hooks/useSettings';
@@ -10,12 +11,15 @@ const DisplaySection = () => {
   const { isRateAvailable, isRateLoading, ratesDate, requestedCurrency } = useCurrency();
 
   return (
-    <Card title="Display" bodyClassName="flex flex-col gap-2">
-      <p className="text-xs text-zinc-500">
-        Every price is fetched and stored in US dollars. Another currency is converted from that at display time, using
-        the European Central Bank's daily reference rate, so nothing about your stored data changes when you switch.
-      </p>
-
+    <Card
+      title={
+        <h2 className="text-sm font-semibold flex items-center gap-1.5">
+          Display
+          <InfoTooltip tooltip="Prices are fetched and stored in US dollars and converted at display time using the European Central Bank's daily reference rate, so switching currency never changes your stored data." />
+        </h2>
+      }
+      bodyClassName="flex flex-col gap-2"
+    >
       <div className="max-w-64">
         <label htmlFor="display-currency" className="block text-xs text-zinc-500 mb-1">
           Currency

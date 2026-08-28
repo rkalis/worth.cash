@@ -101,7 +101,6 @@ export interface AggregatedNftCollection {
   address: string;
   name: string;
   imageUrl?: string;
-  openseaSlug?: string;
   itemCount: number;
   // Collections are filed by their own key, since a collection has no coin id to be identified by.
   categoryId?: string;
@@ -110,9 +109,6 @@ export interface AggregatedNftCollection {
   // collections still appear behind the "show filtered" toggle and count towards nothing.
   isHidden: boolean;
   hiddenReason?: string;
-  // Which source the floor came from, so a valuation can say where it originated rather than presenting
-  // every number as equally authoritative.
-  floorPriceSource?: 'coingecko' | 'opensea';
   valueUsd: number | null;
   items: StoredNftItem[];
 }
@@ -708,10 +704,8 @@ export const aggregateNftCollections = (input: AggregationInput): AggregatedNftC
       address: items[0].collection,
       name: collection?.name ?? collection?.symbol ?? shortenAddress(items[0].collection),
       imageUrl: collection?.imageUrl,
-      openseaSlug: collection?.openseaSlug,
       itemCount,
       floorPriceUsd,
-      floorPriceSource: collection?.floorPriceSource,
       valueUsd,
       isHidden,
       hiddenReason: isUnpriced

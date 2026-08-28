@@ -94,3 +94,31 @@ export const filterPointsByRange = (
   const from = now - RANGE_DURATIONS[range];
   return points.filter((point) => point.timestamp >= from);
 };
+
+// The chart's points, with what the portfolio is worth right now on the end.
+//
+// A recorded point is what the portfolio was worth at a sync. The headline beside the chart, and every
+// period change under it, are what it is worth now: `buildPeriodChanges` measures against the live total,
+// not against the newest point. Ending the line at the last sync therefore leaves the chart disagreeing
+// with both of the figures printed next to it, which reads as an error rather than as the gap between
+// "when I last looked" and "now" that it actually is.
+//
+// The appended point is never stored and never becomes history. Snapshots are written when you sync or
+// when you ask for one, and this changes neither.
+export const withLivePoint = (
+  points: SnapshotPoint[],
+  currentTotalUsd: number,
+  now: number = Date.now(),
+): SnapshotPoint[] => {
+  if (points.length === 0) return points;
+
+  // A portfolio that currently totals nothing is usually one whose data has been cleared, or one mid-first
+  // sync, rather than one that was sold. Drawing a cliff down to zero would state the opposite.
+  if (currentTotalUsd <= 0) return points;
+
+  // A snapshot recorded for a future moment is impossible, but a clock that disagrees is not, and a point
+  // out of order would draw the line backwards.
+  if (points[points.length - 1].timestamp >= now) return points;
+
+  return [...points, { timestamp: now, totalUsd: currentTotalUsd }];
+};

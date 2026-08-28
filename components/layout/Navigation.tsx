@@ -1,5 +1,6 @@
 'use client';
 
+import Logo from 'components/layout/Logo';
 import { cn } from 'lib/utils/classnames';
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
@@ -21,8 +22,10 @@ const Navigation = () => {
     <header className="sticky top-0 z-20 border-b border-zinc-200 dark:border-zinc-800 bg-white/85 dark:bg-black/85 backdrop-blur">
       <nav className="max-w-6xl mx-auto px-4 h-14 flex items-center gap-6">
         <Link href="/" className="flex items-center gap-2 font-semibold text-sm shrink-0">
-          <span className="size-2.5 rounded-full bg-brand" />
-          Portfolio
+          <Logo size={20} />
+          <span>
+            Worth<span className="text-zinc-400 dark:text-zinc-500">.cash</span>
+          </span>
         </Link>
 
         <div className="flex items-center gap-1 overflow-x-auto">

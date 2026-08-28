@@ -80,23 +80,32 @@ export const useManualBalances = () => {
   }, []);
 
   const updateBalance = useCallback(async (id: string, changes: Partial<ManualBalanceInput>) => {
-    const existing = await db.manualBalances.get(id);
-    if (!existing) return;
+    // Read and write inside one transaction. An edit field's blur fires just before a click on Remove
+    // lands, and with a bare get-then-put the remove's delete could run between the two, so the put would
+    // resurrect the balance it had just removed, minus its ledger.
+    const priceNewCoinId = await db.transaction('rw', db.manualBalances, async () => {
+      const existing = await db.manualBalances.get(id);
+      if (!existing) return undefined;
 
-    const coingeckoId =
-      changes.coingeckoId === undefined ? existing.coingeckoId : changes.coingeckoId.trim().toLowerCase() || undefined;
+      const coingeckoId =
+        changes.coingeckoId === undefined
+          ? existing.coingeckoId
+          : changes.coingeckoId.trim().toLowerCase() || undefined;
 
-    await db.manualBalances.put({
-      ...existing,
-      ...(changes.symbol === undefined ? {} : { symbol: changes.symbol.trim().toUpperCase() }),
-      ...(changes.location === undefined ? {} : { location: changes.location.trim() }),
-      ...(changes.wallet === undefined ? {} : { wallet: changes.wallet.trim() || undefined }),
-      coingeckoId,
+      await db.manualBalances.put({
+        ...existing,
+        ...(changes.symbol === undefined ? {} : { symbol: changes.symbol.trim().toUpperCase() }),
+        ...(changes.location === undefined ? {} : { location: changes.location.trim() }),
+        ...(changes.wallet === undefined ? {} : { wallet: changes.wallet.trim() || undefined }),
+        coingeckoId,
+      });
+
+      return coingeckoId !== existing.coingeckoId ? coingeckoId : undefined;
     });
 
     // Only when the price source actually changed: correcting a typo should show a price immediately rather
-    // than after the next sync.
-    if (coingeckoId !== existing.coingeckoId) priceCoinNow(coingeckoId);
+    // than after the next sync. Outside the transaction, since a fetch has no place inside one.
+    if (priceNewCoinId !== undefined) priceCoinNow(priceNewCoinId);
   }, []);
 
   const setBalanceEnabled = useCallback(async (id: string, enabled: boolean) => {
@@ -127,6 +136,23 @@ export const useManualBalances = () => {
     });
   }, []);
 
+  const updateEntry = useCallback(async (id: string, changes: Omit<ManualLedgerInput, 'balanceId'>) => {
+    const existing = await db.manualLedger.get(id);
+    if (!existing) return;
+
+    // The balance an entry belongs to is deliberately not editable: moving a trade between ledgers is two
+    // decisions disguised as one, and deleting plus re-adding says both of them explicitly. A field the
+    // caller did not pass keeps its stored value, the same rule updateBalance follows, so an editor that
+    // has no notion of notes cannot erase one.
+    await db.manualLedger.put({
+      ...existing,
+      kind: changes.kind,
+      amount: changes.amount,
+      timestamp: changes.timestamp,
+      ...(changes.note === undefined ? {} : { note: changes.note.trim() || undefined }),
+    });
+  }, []);
+
   const removeEntry = useCallback(async (id: string) => {
     await db.manualLedger.delete(id);
   }, []);
@@ -140,6 +166,7 @@ export const useManualBalances = () => {
     setBalanceEnabled,
     removeBalance,
     addEntry,
+    updateEntry,
     removeEntry,
     isLoading: balances === NO_BALANCES && entries === NO_ENTRIES,
   };

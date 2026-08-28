@@ -5,16 +5,19 @@ import Badge from 'components/ui/Badge';
 import ChainLogo from 'components/ui/ChainLogo';
 import { shortenAddress } from 'lib/format';
 import { useCurrency } from 'lib/hooks/useCurrency';
+import { topUpNftMetadata } from 'lib/nfts/metadata';
 import type { AggregatedNftCollection } from 'lib/portfolio/aggregate';
-import { useState } from 'react';
+import { cn } from 'lib/utils/classnames';
+import { useEffect, useState } from 'react';
 
 interface Props {
   collection: AggregatedNftCollection;
 }
 
-// How many items to render before collapsing the rest behind a toggle. A single collection can hold
-// hundreds of items, and mounting every image at once makes the page unusable.
-const PREVIEW_ITEM_COUNT = 12;
+// How many items to render before collapsing the rest behind a toggle: one row of the grid. A single
+// collection can hold hundreds of items, and a page of many collections is read as a list of collections,
+// not as a wall of artwork; one row says what the collection looks like and the toggle does the rest.
+const PREVIEW_ITEM_COUNT = 4;
 
 const CollectionCard = ({ collection }: Props) => {
   const [showAllItems, setShowAllItems] = useState(false);
@@ -22,6 +25,15 @@ const CollectionCard = ({ collection }: Props) => {
 
   const items = showAllItems ? collection.items : collection.items.slice(0, PREVIEW_ITEM_COUNT);
   const hiddenItemCount = collection.items.length - items.length;
+
+  // Artwork for exactly the items on screen. A sync only fetches metadata for a bounded number of items,
+  // so the card being looked at is where the rest gets filled in; the live query repaints as rows update.
+  // Keyed on the stable inputs rather than on the sliced array, which is a fresh reference every render;
+  // expanding the card changes `showAllItems` and tops up the newly revealed items.
+  useEffect(() => {
+    const visible = showAllItems ? collection.items : collection.items.slice(0, PREVIEW_ITEM_COUNT);
+    void topUpNftMetadata(collection.chainId, visible).catch(() => undefined);
+  }, [collection.chainId, collection.items, showAllItems]);
 
   return (
     <section className="border border-zinc-200 dark:border-zinc-800 rounded-xl overflow-hidden">
@@ -41,27 +53,17 @@ const CollectionCard = ({ collection }: Props) => {
         <div className="text-right shrink-0">
           <div className="text-sm font-medium tabular">{formatValue(collection.valueUsd)}</div>
           <div className="text-[11px] text-zinc-500 tabular">
-            {collection.floorPriceUsd === null ? (
-              'No floor price'
-            ) : (
-              <>
-                {formatPrice(collection.floorPriceUsd)} floor
-                {collection.floorPriceSource ? (
-                  <span className="text-zinc-400">
-                    {' '}
-                    · {collection.floorPriceSource === 'coingecko' ? 'CoinGecko' : 'OpenSea'}
-                  </span>
-                ) : null}
-              </>
-            )}
+            {collection.floorPriceUsd === null ? 'No floor price' : <>{formatPrice(collection.floorPriceUsd)} floor</>}
           </div>
         </div>
       </header>
 
       <div className="p-3">
         <div className="grid grid-cols-3 sm:grid-cols-4 gap-2">
-          {items.map((item) => (
-            <div key={item.id} className="group relative">
+          {items.map((item, index) => (
+            // The fourth preview tile only exists where the grid has four columns; on a phone's three it
+            // would start a second row, and the preview is one row by design.
+            <div key={item.id} className={cn('group relative', !showAllItems && index === 3 && 'hidden sm:block')}>
               <NftImage
                 src={item.imageUrl}
                 alt={item.name ?? `#${item.tokenId}`}

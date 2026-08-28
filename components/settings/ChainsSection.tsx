@@ -4,6 +4,7 @@ import Badge from 'components/ui/Badge';
 import Button from 'components/ui/Button';
 import Card from 'components/ui/Card';
 import ChainLogo from 'components/ui/ChainLogo';
+import InfoTooltip from 'components/ui/InfoTooltip';
 import Input from 'components/ui/Input';
 import Toggle from 'components/ui/Toggle';
 import { chainIdSorter, getChainConfig, getChainName, SUPPORTED_CHAINS } from 'lib/chains';
@@ -52,7 +53,12 @@ const ChainsSection = () => {
 
   return (
     <Card
-      title={`Chains (${enabledCount} of ${allChains.length})`}
+      title={
+        <h2 className="text-sm font-semibold flex items-center gap-1.5">
+          {`Chains (${enabledCount} of ${allChains.length})`}
+          <InfoTooltip tooltip="Every supported chain is synced by default. The first sync reads each chain's full transfer history once, which is slow and API-hungry; after that syncing is incremental. Disabling a chain hides what was synced from it without deleting anything, so re-enabling brings balances straight back." />
+        </h2>
+      }
       bodyClassName="flex flex-col gap-4"
       action={
         <div className="flex gap-1">
@@ -80,20 +86,9 @@ const ChainsSection = () => {
         </div>
       }
     >
-      <p className="text-xs text-zinc-500">
-        Every supported chain is synced by default. A first sync across all of them takes a long time and uses a lot of
-        API quota, because each chain's full transfer history has to be read once. After that, syncing is incremental
-        and fast.
-      </p>
-
-      <p className="text-xs text-zinc-500">
-        Disabling a chain hides everything already synced from it as well as stopping future syncs. Nothing is deleted,
-        so re-enabling a chain brings its balances straight back without syncing again.
-      </p>
-
       <Toggle
         label="Skip chains with no account activity"
-        description="Skips reading a chain's history when the address has never sent a transaction there and holds none of its native token. A large speed-up on a first sync. Turn it off if you track an address that only ever received tokens and never transacted."
+        tooltip="Skips reading a chain's history when the address has never sent a transaction there and holds none of its native token. A large speed-up on a first sync. Turn it off if you track an address that only ever received tokens and never transacted."
         checked={settings.sync.skipInactiveChains}
         onChange={(checked) => updateSettings({ sync: { ...settings.sync, skipInactiveChains: checked } })}
       />
@@ -112,7 +107,7 @@ const ChainsSection = () => {
           type="number"
           min={1}
           max={16}
-          hint="Higher is faster but more likely to hit provider rate limits."
+          tooltip="Higher is faster but more likely to hit provider rate limits."
           value={settings.sync.chainConcurrency}
           onChange={(event) =>
             updateSettings({

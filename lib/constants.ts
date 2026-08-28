@@ -15,6 +15,5 @@ export const WHOIS_BASE_URL = 'https://whois.revoke.cash/generated';
 
 export const COINGECKO_PRO_API_BASE_URL = 'https://pro-api.coingecko.com/api/v3';
 export const COINGECKO_PUBLIC_API_BASE_URL = 'https://api.coingecko.com/api/v3';
-export const OPENSEA_API_BASE_URL = 'https://api.opensea.io/api/v2';
 export const COINBASE_API_BASE_URL = 'https://api.coinbase.com';
 export const KRAKEN_API_BASE_URL = 'https://api.kraken.com';

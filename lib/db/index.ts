@@ -60,6 +60,8 @@ export class PortfolioDatabase extends Dexie {
       syncCursors: 'id, [chainId+owner], chainId, owner, status',
       tokens: 'id, [chainId+address], chainId, isSpam',
       balances: 'id, [chainId+owner], [owner+token], owner, token, chainId',
+      // openseaSlug stays in this historical version declaration even though the integration is gone:
+      // version definitions describe what existed at the time, and version 4 below drops the index.
       nftCollections: 'id, [chainId+address], chainId, openseaSlug',
       nftItems: 'id, [chainId+owner], [chainId+collection], [owner+collection], owner, collection',
       prices: 'id, updatedAt',
@@ -83,6 +85,12 @@ export class PortfolioDatabase extends Dexie {
     this.version(3).stores({
       assetCategories: 'id, sortIndex',
       categoryAssignments: 'id, categoryId',
+    });
+
+    // The OpenSea integration was removed; this drops its index. Stored rows keep any openseaSlug field
+    // they already carry, which Dexie simply no longer indexes or reads.
+    this.version(4).stores({
+      nftCollections: 'id, [chainId+address], chainId',
     });
   }
 }

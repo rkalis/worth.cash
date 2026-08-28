@@ -1,6 +1,6 @@
 import { db } from 'lib/db';
 import { coingeckoPriceKey } from 'lib/db/keys';
-import type { SnapshotPosition, StoredSnapshot } from 'lib/db/schema';
+import type { SnapshotPosition, StoredManualBalance, StoredSnapshot } from 'lib/db/schema';
 import { loadSettings } from 'lib/db/settings';
 import { amountAt, groupEntriesByBalance } from 'lib/manual/balances';
 import {
@@ -82,8 +82,14 @@ export const reprocessManualBalances = async (
       const amount = amountAt(entriesByBalance.get(balance.id) ?? [], snapshot.timestamp);
       if (amount < spam.dustThresholdAmount) continue;
 
+      // The price this point already recorded wins over a replayed one.
+      //
+      // Same trade this module refuses to make with the on-chain figures, for the same reason: a recorded
+      // price is a spot price captured at that moment, while the historical series is one bucketed point
+      // per UTC day carried forward. A point taken after the balance was added already knows the answer,
+      // and re-pricing it would swap a fact for an approximation.
       const series = balance.coingeckoId ? seriesByCoinId.get(balance.coingeckoId) : undefined;
-      const priceUsd = series ? priceAt(series, snapshot.timestamp) : null;
+      const priceUsd = recordedPriceFor(snapshot, balance) ?? (series ? priceAt(series, snapshot.timestamp) : null);
 
       if (priceUsd === null) unpricedPositionCount += 1;
 
@@ -127,6 +133,24 @@ export const reprocessManualBalances = async (
     earliestPricedTimestamp:
       earliestPriced !== null && snapshots[0].timestamp < earliestPriced ? earliestPriced : undefined,
   };
+};
+
+// What this snapshot recorded for a hand-entered holding, if it was holding it at the time.
+//
+// Checked under both keys the app writes manual positions with: the snapshot writer files one under the
+// asset's identity, since a hand-entered holding merges into the row for the same coin held anywhere else,
+// while this module writes one per balance. Only a real number counts, so a position previously written
+// with no price is asked about again rather than being left unpriced forever.
+const recordedPriceFor = (snapshot: StoredSnapshot, balance: StoredManualBalance): number | undefined => {
+  const keys = [balance.coingeckoId ? `coin:${balance.coingeckoId}` : undefined, `manual:${balance.id}`].filter(
+    (key): key is string => key !== undefined,
+  );
+
+  const recorded = snapshot.positions.find(
+    (position) => position.kind === 'manual' && keys.includes(position.priceKey),
+  );
+
+  return typeof recorded?.priceUsd === 'number' ? recorded.priceUsd : undefined;
 };
 
 // One price series per coin, covering every snapshot at once.

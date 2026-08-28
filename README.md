@@ -1,6 +1,6 @@
-# Portfolio Tracker
+# Worth.cash
 
-A self-hosted crypto portfolio tracker. It watches EVM wallet addresses across ~90 chains, pulls balances
+What your crypto is worth, wherever it is. A self-hosted portfolio tracker: It watches EVM wallet addresses across ~90 chains, pulls balances
 from Coinbase and Kraken, and keeps everything in your browser's IndexedDB. There is no server-side
 database, no account, and nothing is uploaded anywhere except to the APIs whose keys you configure.
 
@@ -24,8 +24,7 @@ database, no account, and nothing is uploaded anywhere except to the APIs whose 
   page, which folds the ledger into them at each moment's own price without adding points or touching the
   on-chain figures those snapshots already hold. Because the price source is a coin id, a manual BTC holding shares a row with the BTC on
   your exchange, listed as another location beside it.
-- **NFTs**, grouped by collection, with artwork and floor prices from CoinGecko first and OpenSea for the
-  long tail. The portfolio page carries a condensed collection table; the NFTs page has the full view with
+- **NFTs**, grouped by collection, with artwork and floor prices from CoinGecko. The portfolio page carries a condensed collection table; the NFTs page has the full view with
   per-item artwork.
 - **A value chart you control.** Nothing is recorded on a schedule: a snapshot is written every time you
   sync, and you can add one for any past moment by picking a date and time on the History page, which
@@ -65,7 +64,6 @@ your keys allow and degrades rather than failing when one is missing.
 | --- | --- | --- |
 | Etherscan (V2) | Log history on every Etherscan-family explorer. One key covers all of them. | Explorer requests drop to 1 per 5 seconds, too slow to sync a full history |
 | CoinGecko | All prices, including NFT floors. Plan is detected automatically. | Much lower rate limits, 365 days of history at most, and no historical NFT floors |
-| OpenSea | NFT floor prices beyond the ~2,000 collections CoinGecko indexes | Blue-chip collections are still valued via CoinGecko; the long tail is not |
 | Blockscout | The ~21 chains routed through Blockscout's hosted API, which now answers keyless requests with HTTP 402 | Those chains fail to sync and say so |
 | Alchemy / dRPC (see below) | A reliable RPC per chain | Public endpoints, many of which refuse browser requests |
 | HyperSync (Envio) | Fast log history on the chains configured for it | Those chains fall back to their public RPC |
@@ -111,11 +109,10 @@ That market data is also where the icons for exchange-held assets come from. The
 in the whois dataset for BTC or SOL, and the same request that prices them carries their artwork, so it is
 stored alongside the ticker map and doubles as a fallback icon for on-chain tokens whois has never seen.
 
-NFT floors come from two sources in order. CoinGecko is tried first: it is a single request keyed by
-contract address, it returns a USD figure directly rather than one denominated in whatever token the
-marketplace quotes, it reuses the key token pricing already needs, and it covers chains that have no OpenSea
-marketplace at all (Berachain, HyperEVM, Robinhood, and others). Its limit is breadth, at roughly two
-thousand collections, so OpenSea then covers the long tail. A "not indexed" answer is cached for a week,
+NFT floors come from CoinGecko: a single request keyed by contract address, answered as a USD figure
+directly rather than one denominated in whatever token a marketplace quotes, using the key token pricing
+already needs. Its limit is breadth, at roughly two thousand collections, so the long tail of a typical
+wallet has no floor and is counted at nothing. A "not indexed" answer is cached for a week,
 while a rate-limited or failed lookup is not cached at all, so a transient error never masquerades as a
 missing collection.
 

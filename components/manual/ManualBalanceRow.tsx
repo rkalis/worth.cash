@@ -7,7 +7,7 @@ import TokenLogo from 'components/ui/TokenLogo';
 import { formatAmount, formatDateTimeUtc } from 'lib/format';
 import { currentUtcTimeInput, snapshotTimestampFromUtcInput, toUtcDateInputValue } from 'lib/history/snapshot';
 import { useCurrency } from 'lib/hooks/useCurrency';
-import type { ManualBalanceInput } from 'lib/hooks/useManualBalances';
+import type { ManualBalanceInput, ManualLedgerInput } from 'lib/hooks/useManualBalances';
 import type { ManualHolding } from 'lib/manual/balances';
 import { cn } from 'lib/utils/classnames';
 import { useState } from 'react';
@@ -24,13 +24,8 @@ interface Props {
   onUpdate: (id: string, changes: Partial<ManualBalanceInput>) => Promise<void>;
   onToggle: (id: string, enabled: boolean) => void;
   onRemove: (id: string) => void;
-  onAddEntry: (input: {
-    balanceId: string;
-    kind: 'buy' | 'sell';
-    amount: string;
-    timestamp: number;
-    note?: string;
-  }) => Promise<void>;
+  onAddEntry: (input: ManualLedgerInput) => Promise<void>;
+  onUpdateEntry: (id: string, changes: { kind: 'buy' | 'sell'; amount: string; timestamp: number }) => Promise<void>;
   onRemoveEntry: (id: string) => void;
 }
 
@@ -43,6 +38,7 @@ const ManualBalanceRow = ({
   onToggle,
   onRemove,
   onAddEntry,
+  onUpdateEntry,
   onRemoveEntry,
 }: Props) => {
   const { formatValue } = useCurrency();
@@ -51,6 +47,7 @@ const ManualBalanceRow = ({
   const [isExpanded, setIsExpanded] = useState(entries.length === 0);
   const [kind, setKind] = useState<'buy' | 'sell'>('buy');
   const [entryAmount, setEntryAmount] = useState('');
+  const [isAddingEntry, setIsAddingEntry] = useState(false);
   const [date, setDate] = useState(() => toUtcDateInputValue(Date.now()));
   const [time, setTime] = useState(() => currentUtcTimeInput());
   const [entryError, setEntryError] = useState<string>();
@@ -77,11 +74,14 @@ const ManualBalanceRow = ({
       return;
     }
 
+    setIsAddingEntry(true);
     try {
       await onAddEntry({ balanceId: balance.id, kind, amount: entryAmount.trim(), timestamp });
       setEntryAmount('');
     } catch (submitError) {
       setEntryError(submitError instanceof Error ? submitError.message : String(submitError));
+    } finally {
+      setIsAddingEntry(false);
     }
   };
 
@@ -139,7 +139,12 @@ const ManualBalanceRow = ({
                 name={`manual-edit-location-${balance.id}`}
                 label="Chain or exchange"
                 defaultValue={balance.location}
-                onBlur={(event) => onUpdate(balance.id, { location: event.target.value })}
+                onBlur={(event) => {
+                  const location = event.target.value.trim();
+                  // Unchanged blurs write nothing, and the location cannot be blanked: the add form
+                  // requires one, and a holding nowhere is not a holding.
+                  if (location && location !== balance.location) onUpdate(balance.id, { location });
+                }}
               />
             </div>
 
@@ -149,7 +154,11 @@ const ManualBalanceRow = ({
                 label="Wallet"
                 placeholder="Ledger"
                 defaultValue={balance.wallet ?? ''}
-                onBlur={(event) => onUpdate(balance.id, { wallet: event.target.value })}
+                onBlur={(event) => {
+                  if (event.target.value.trim() !== (balance.wallet ?? '')) {
+                    onUpdate(balance.id, { wallet: event.target.value });
+                  }
+                }}
               />
             </div>
 
@@ -159,7 +168,11 @@ const ManualBalanceRow = ({
                 label="Price source"
                 placeholder="bitcoin"
                 defaultValue={balance.coingeckoId ?? ''}
-                onBlur={(event) => onUpdate(balance.id, { coingeckoId: event.target.value })}
+                onBlur={(event) => {
+                  if (event.target.value.trim().toLowerCase() !== (balance.coingeckoId ?? '')) {
+                    onUpdate(balance.id, { coingeckoId: event.target.value });
+                  }
+                }}
               />
             </div>
           </div>
@@ -214,7 +227,7 @@ const ManualBalanceRow = ({
               />
             </div>
 
-            <Button variant="secondary" size="sm" onClick={submitEntry}>
+            <Button variant="secondary" onClick={submitEntry} loading={isAddingEntry} disabled={isAddingEntry}>
               Add entry
             </Button>
           </div>
@@ -223,38 +236,19 @@ const ManualBalanceRow = ({
 
           {entries.length === 0 ? (
             <p className="text-xs text-zinc-500">
-              No entries yet. Record the buy that gave you this holding, dated when it happened, and the history will
-              value it from that moment on.
+              No entries yet. Record the buy that gave you this holding, dated when it happened.
             </p>
           ) : (
             <table className="w-full text-xs">
               <tbody>
                 {entries.map((entry) => (
-                  <tr key={entry.id} className="border-b border-zinc-100 dark:border-zinc-900 last:border-0">
-                    <td className="py-1.5 w-12">
-                      <span
-                        className={cn(
-                          entry.kind === 'buy'
-                            ? 'text-green-600 dark:text-green-500'
-                            : 'text-red-600 dark:text-red-500',
-                        )}
-                      >
-                        {entry.kind}
-                      </span>
-                    </td>
-                    <td className="py-1.5 tabular">{entry.amount}</td>
-                    <td className="py-1.5 text-zinc-500">{formatDateTimeUtc(entry.timestamp)}</td>
-                    <td className="py-1.5 text-right">
-                      <button
-                        type="button"
-                        aria-label={`Remove the ${entry.kind} of ${entry.amount} ${balance.symbol}`}
-                        className="text-zinc-400 hover:text-red-600 dark:hover:text-red-400 px-1"
-                        onClick={() => onRemoveEntry(entry.id)}
-                      >
-                        remove
-                      </button>
-                    </td>
-                  </tr>
+                  <LedgerEntryRow
+                    key={entry.id}
+                    entry={entry}
+                    symbol={balance.symbol}
+                    onUpdate={onUpdateEntry}
+                    onRemove={onRemoveEntry}
+                  />
                 ))}
               </tbody>
             </table>
@@ -262,6 +256,164 @@ const ManualBalanceRow = ({
         </div>
       ) : null}
     </div>
+  );
+};
+
+interface LedgerEntryRowProps {
+  entry: { id: string; kind: 'buy' | 'sell'; amount: string; timestamp: number; note?: string };
+  symbol: string;
+  onUpdate: (id: string, changes: { kind: 'buy' | 'sell'; amount: string; timestamp: number }) => Promise<void>;
+  onRemove: (id: string) => void;
+}
+
+// One ledger entry, readable by default and editable in place.
+//
+// Editing replaces the row with the same fields the add form uses, under the same rules: a positive
+// amount, a real moment, and never one in the future. In place rather than in a dialog, because the thing
+// being corrected is exactly what the row already shows.
+const LedgerEntryRow = ({ entry, symbol, onUpdate, onRemove }: LedgerEntryRowProps) => {
+  const [isEditing, setIsEditing] = useState(false);
+  const [kind, setKind] = useState<'buy' | 'sell'>(entry.kind);
+  const [amount, setAmount] = useState(entry.amount);
+  const [date, setDate] = useState(() => toUtcDateInputValue(entry.timestamp));
+  const [time, setTime] = useState(() => currentUtcTimeInput(entry.timestamp));
+  const [editError, setEditError] = useState<string>();
+  const [isSaving, setIsSaving] = useState(false);
+
+  const startEditing = () => {
+    // Re-seeded from the entry each time, so cancelling and reopening does not resurrect abandoned edits.
+    setKind(entry.kind);
+    setAmount(entry.amount);
+    setDate(toUtcDateInputValue(entry.timestamp));
+    setTime(currentUtcTimeInput(entry.timestamp));
+    setEditError(undefined);
+    setIsEditing(true);
+  };
+
+  const save = async () => {
+    setEditError(undefined);
+
+    const parsedAmount = Number(amount);
+    if (!Number.isFinite(parsedAmount) || parsedAmount <= 0) {
+      setEditError('Enter an amount greater than zero.');
+      return;
+    }
+
+    const timestamp = snapshotTimestampFromUtcInput(date, time);
+    if (timestamp === null) {
+      setEditError('Enter a valid date and time.');
+      return;
+    }
+
+    // The same rule the add form applies: a future-dated entry is silently ignored by every replay, which
+    // reads as the edit having been lost.
+    if (timestamp > Date.now()) {
+      setEditError('A ledger entry cannot be dated in the future.');
+      return;
+    }
+
+    setIsSaving(true);
+    try {
+      await onUpdate(entry.id, { kind, amount: amount.trim(), timestamp });
+      setIsEditing(false);
+    } catch (saveError) {
+      setEditError(saveError instanceof Error ? saveError.message : String(saveError));
+    } finally {
+      setIsSaving(false);
+    }
+  };
+
+  if (!isEditing) {
+    return (
+      <tr className="border-b border-zinc-100 dark:border-zinc-900 last:border-0">
+        <td className="py-1.5 w-12">
+          <span
+            className={cn(
+              entry.kind === 'buy' ? 'text-green-600 dark:text-green-500' : 'text-red-600 dark:text-red-500',
+            )}
+          >
+            {entry.kind}
+          </span>
+        </td>
+        <td className="py-1.5 tabular">{entry.amount}</td>
+        <td className="py-1.5 text-zinc-500">{formatDateTimeUtc(entry.timestamp)}</td>
+        <td className="py-1.5 text-right whitespace-nowrap">
+          <button
+            type="button"
+            aria-label={`Edit the ${entry.kind} of ${entry.amount} ${symbol}`}
+            className="text-zinc-400 hover:text-black dark:hover:text-white px-1"
+            onClick={startEditing}
+          >
+            edit
+          </button>
+          <button
+            type="button"
+            aria-label={`Remove the ${entry.kind} of ${entry.amount} ${symbol}`}
+            className="text-zinc-400 hover:text-red-600 dark:hover:text-red-400 px-1"
+            onClick={() => onRemove(entry.id)}
+          >
+            remove
+          </button>
+        </td>
+      </tr>
+    );
+  }
+
+  return (
+    <tr className="border-b border-zinc-100 dark:border-zinc-900 last:border-0">
+      <td colSpan={4} className="py-2">
+        <div className="flex flex-wrap items-center gap-2">
+          <div className="flex gap-1">
+            {(['buy', 'sell'] as const).map((option) => (
+              <button
+                key={option}
+                type="button"
+                onClick={() => setKind(option)}
+                className={cn(
+                  'px-2 h-8 rounded-md text-xs border transition-colors capitalize',
+                  kind === option
+                    ? 'border-zinc-900 dark:border-white bg-zinc-900 dark:bg-white text-white dark:text-black'
+                    : 'border-zinc-300 dark:border-zinc-700 text-zinc-600 dark:text-zinc-400',
+                )}
+              >
+                {option}
+              </button>
+            ))}
+          </div>
+
+          <input
+            aria-label="Amount"
+            value={amount}
+            onChange={(event) => setAmount(event.target.value)}
+            className="w-24 h-8 px-2 rounded-md border border-zinc-300 dark:border-zinc-700 bg-white dark:bg-zinc-950 text-xs"
+          />
+          <input
+            aria-label="Date (UTC)"
+            type="date"
+            value={date}
+            max={toUtcDateInputValue(Date.now())}
+            onChange={(event) => setDate(event.target.value)}
+            className="h-8 px-2 rounded-md border border-zinc-300 dark:border-zinc-700 bg-white dark:bg-zinc-950 text-xs"
+          />
+          <input
+            aria-label="Time (UTC)"
+            type="time"
+            value={time}
+            onChange={(event) => setTime(event.target.value)}
+            className="h-8 px-2 rounded-md border border-zinc-300 dark:border-zinc-700 bg-white dark:bg-zinc-950 text-xs"
+          />
+
+          <Button variant="primary" size="sm" onClick={save} loading={isSaving} disabled={isSaving}>
+            Save
+          </Button>
+          <Button variant="tertiary" size="sm" onClick={() => setIsEditing(false)}>
+            Cancel
+          </Button>
+        </div>
+
+        {editError ? <p className="text-xs text-red-600 dark:text-red-400 mt-1">{editError}</p> : null}
+      </td>
+    </tr>
   );
 };
 

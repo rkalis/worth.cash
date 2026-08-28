@@ -2,6 +2,7 @@
 
 import Button from 'components/ui/Button';
 import Card from 'components/ui/Card';
+import InfoTooltip from 'components/ui/InfoTooltip';
 import Input from 'components/ui/Input';
 import { useAssetCategories } from 'lib/hooks/useAssetCategories';
 import { CATEGORY_COLORS } from 'lib/portfolio/breakdown';
@@ -25,13 +26,15 @@ const CategoriesSection = () => {
   };
 
   return (
-    <Card title="Asset categories" bodyClassName="flex flex-col gap-4">
-      <p className="text-xs text-zinc-500">
-        Your own groupings, for seeing the split between them on the Graphs page. Assign an asset to one from the
-        dropdown in its row on the portfolio and NFT tables. Anything you have not filed counts as "Other tokens" or
-        "Other NFTs", so there is no need to categorise everything.
-      </p>
-
+    <Card
+      title={
+        <h2 className="text-sm font-semibold flex items-center gap-1.5">
+          Asset categories
+          <InfoTooltip tooltip="Your own groupings, shown as a split on the Graphs page. Assign an asset from the dropdown in its row on the portfolio and NFT tables; anything unfiled counts as Other tokens or Other NFTs, so nothing has to be categorised." />
+        </h2>
+      }
+      bodyClassName="flex flex-col gap-4"
+    >
       <div className="flex items-end gap-3">
         <div className="flex-1 max-w-64">
           <Input
@@ -46,7 +49,7 @@ const CategoriesSection = () => {
           />
         </div>
 
-        <Button variant="primary" size="sm" onClick={submit}>
+        <Button variant="primary" onClick={submit}>
           Add category
         </Button>
       </div>

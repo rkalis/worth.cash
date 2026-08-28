@@ -8,7 +8,6 @@ export interface ProviderApiKeys {
   // Blockscout instances are usually keyless, but hosted ones can be rate limited without a key.
   blockscout?: string;
   coingecko?: string;
-  opensea?: string;
   // Envio HyperSync bearer token. Without it HyperSync still works but at a lower rate limit.
   hypersync?: string;
   // Used to build higher-quality RPC URLs for the chains whose configs reference them.

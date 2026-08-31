@@ -29,7 +29,7 @@ export const metadata: Metadata = {
 // wrong theme on every page load.
 const THEME_BOOT_SCRIPT = `
 try {
-  var stored = localStorage.getItem('portfolio-tracker-theme');
+  var stored = localStorage.getItem('worth.cash-theme');
   var prefersDark = window.matchMedia('(prefers-color-scheme: dark)').matches;
   if (stored === 'dark' || (!stored && prefersDark)) document.documentElement.classList.add('dark');
 } catch (error) {}

@@ -5,7 +5,7 @@ import { useEffect, useState } from 'react';
 
 type Theme = 'light' | 'dark';
 
-const THEME_STORAGE_KEY = 'portfolio-tracker-theme';
+const THEME_STORAGE_KEY = 'worth.cash-theme';
 
 export const applyTheme = (theme: Theme) => {
   document.documentElement.classList.toggle('dark', theme === 'dark');

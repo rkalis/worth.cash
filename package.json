@@ -1,5 +1,5 @@
 {
-  "name": "portfolio-tracker",
+  "name": "worth.cash",
   "description": "Worth.cash: what your crypto is worth, wherever it is. Multichain EVM token and NFT balances plus exchange holdings, stored locally in IndexedDB.",
   "version": "0.1.0",
   "private": true,

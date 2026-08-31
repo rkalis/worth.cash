@@ -45,7 +45,7 @@ export class PortfolioDatabase extends Dexie {
   categoryAssignments!: Table<StoredCategoryAssignment, string>;
 
   constructor() {
-    super('portfolio-tracker');
+    super('worth.cash');
 
     // Only indexed fields are listed here; every other field of a row is stored but not queryable.
     this.version(1).stores({

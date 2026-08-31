@@ -2442,45 +2442,6 @@ __metadata:
   languageName: node
   linkType: hard
 
-"portfolio-tracker@workspace:.":
-  version: 0.0.0-use.local
-  resolution: "portfolio-tracker@workspace:."
-  dependencies:
-    "@biomejs/biome": "npm:^2.5.8"
-    "@envio-dev/hypersync-client": "npm:^1.4.0"
-    "@floating-ui/react": "npm:^0.27.20"
-    "@revoke.cash/chains": "npm:^80.0.0"
-    "@tailwindcss/postcss": "npm:^4.3.3"
-    "@tanstack/react-query": "npm:^5.101.4"
-    "@testing-library/dom": "npm:^10.4.1"
-    "@testing-library/react": "npm:^16"
-    "@types/jsdom": "npm:^30"
-    "@types/node": "npm:^22.20.1"
-    "@types/react": "npm:^19.2.18"
-    "@types/react-dom": "npm:^19.2.4"
-    "@types/react-is": "npm:^19"
-    clsx: "npm:^2.1.1"
-    dexie: "npm:^4.4.4"
-    dexie-react-hooks: "npm:^4.4.0"
-    jsdom: "npm:^30.0.1"
-    ky: "npm:^2.0.2"
-    next: "npm:^16.3.0"
-    p-queue: "npm:^9.3.3"
-    postcss: "npm:^8.5.26"
-    react: "npm:^19.2.8"
-    react-dom: "npm:^19.2.8"
-    react-is: "npm:^19.2.8"
-    recharts: "npm:^3.7.0"
-    tailwind-merge: "npm:^3.6.0"
-    tailwindcss: "npm:4.3.3"
-    typescript: "npm:^6.0.3"
-    viem: "npm:^2.55.13"
-    vitest: "npm:^4.0.0"
-    zod: "npm:^4.4.3"
-    zustand: "npm:^5.0.14"
-  languageName: unknown
-  linkType: soft
-
 "postcss@npm:8.5.23":
   version: 8.5.23
   resolution: "postcss@npm:8.5.23"
@@ -3267,6 +3228,45 @@ __metadata:
   checksum: 10/0de6e6cd8f2f94a8b5ca44e84cf1751eadcac3ebedcdc6e5fbbe6c8011904afcbc1a2777c53496ec02ced7b81f2e7eda61e76bf8262a8bc3ceaa1f6040508051
   languageName: node
   linkType: hard
+
+"worth.cash@workspace:.":
+  version: 0.0.0-use.local
+  resolution: "worth.cash@workspace:."
+  dependencies:
+    "@biomejs/biome": "npm:^2.5.8"
+    "@envio-dev/hypersync-client": "npm:^1.4.0"
+    "@floating-ui/react": "npm:^0.27.20"
+    "@revoke.cash/chains": "npm:^80.0.0"
+    "@tailwindcss/postcss": "npm:^4.3.3"
+    "@tanstack/react-query": "npm:^5.101.4"
+    "@testing-library/dom": "npm:^10.4.1"
+    "@testing-library/react": "npm:^16"
+    "@types/jsdom": "npm:^30"
+    "@types/node": "npm:^22.20.1"
+    "@types/react": "npm:^19.2.18"
+    "@types/react-dom": "npm:^19.2.4"
+    "@types/react-is": "npm:^19"
+    clsx: "npm:^2.1.1"
+    dexie: "npm:^4.4.4"
+    dexie-react-hooks: "npm:^4.4.0"
+    jsdom: "npm:^30.0.1"
+    ky: "npm:^2.0.2"
+    next: "npm:^16.3.0"
+    p-queue: "npm:^9.3.3"
+    postcss: "npm:^8.5.26"
+    react: "npm:^19.2.8"
+    react-dom: "npm:^19.2.8"
+    react-is: "npm:^19.2.8"
+    recharts: "npm:^3.7.0"
+    tailwind-merge: "npm:^3.6.0"
+    tailwindcss: "npm:4.3.3"
+    typescript: "npm:^6.0.3"
+    viem: "npm:^2.55.13"
+    vitest: "npm:^4.0.0"
+    zod: "npm:^4.4.3"
+    zustand: "npm:^5.0.14"
+  languageName: unknown
+  linkType: soft
 
 "ws@npm:8.21.0":
   version: 8.21.0

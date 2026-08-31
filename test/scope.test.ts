@@ -11,7 +11,15 @@ const buildSnapshot = (overrides: Partial<StoredSnapshot> = {}): StoredSnapshot 
   timestamp: 1_000,
   totalUsd: 100,
   createdAt: 1_000,
-  positions: [],
+  balances: [],
+  tokens: [],
+  prices: [],
+  nftCollections: [],
+  nftHoldings: [],
+  exchangeBalances: [],
+  exchangeAccounts: [],
+  exchangeAssetCoingeckoIds: {},
+  manualHoldings: [],
   ...overrides,
 });
 

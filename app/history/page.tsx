@@ -9,6 +9,7 @@ import { formatDateTimeUtc } from 'lib/format';
 import { withLivePoint } from 'lib/history/periods';
 import { deleteSnapshot } from 'lib/history/snapshot';
 import { useCurrency } from 'lib/hooks/useCurrency';
+import { usePinnedSnapshotStore } from 'lib/hooks/usePinnedSnapshot';
 import { usePortfolio } from 'lib/hooks/usePortfolio';
 import { useSnapshots } from 'lib/hooks/useSnapshots';
 import { cn } from 'lib/utils/classnames';
@@ -17,6 +18,8 @@ const HistoryPage = () => {
   const history = useSnapshots();
   const portfolio = usePortfolio();
   const { formatValue } = useCurrency();
+  const pinnedTimestamp = usePinnedSnapshotStore((state) => state.pinnedTimestamp);
+  const togglePin = usePinnedSnapshotStore((state) => state.toggle);
 
   const reversedPoints = [...history.points].reverse();
 
@@ -77,7 +80,24 @@ const HistoryPage = () => {
                       >
                         {change === null ? '-' : `${change >= 0 ? '+' : '-'}${formatValue(Math.abs(change))}`}
                       </td>
-                      <td className="py-2 pr-4 pl-2 text-right">
+                      <td className="py-2 pr-4 pl-2 text-right whitespace-nowrap">
+                        {/* The keyboard-reachable way to pin: the chart's click targets are mouse-only,
+                            and this table is the same list of points with real buttons. */}
+                        <button
+                          type="button"
+                          aria-pressed={pinnedTimestamp === point.timestamp}
+                          aria-label={`${pinnedTimestamp === point.timestamp ? 'Unpin' : 'Pin'} the snapshot from ${formatDateTimeUtc(point.timestamp)}`}
+                          title="Show the portfolio as it stood at this snapshot"
+                          className={cn(
+                            'text-xs px-1',
+                            pinnedTimestamp === point.timestamp
+                              ? 'text-amber-700 dark:text-amber-500'
+                              : 'text-zinc-400 hover:text-black dark:hover:text-white',
+                          )}
+                          onClick={() => togglePin(point.timestamp)}
+                        >
+                          {pinnedTimestamp === point.timestamp ? 'pinned' : 'pin'}
+                        </button>
                         {/* Snapshots are the user's own records rather than something a schedule produced,
                             so they get to remove one they did not mean to take. */}
                         <button

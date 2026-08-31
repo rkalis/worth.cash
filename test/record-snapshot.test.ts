@@ -1,26 +1,26 @@
-import type { SnapshotPosition } from 'lib/db/schema';
 import type { AggregationInput } from 'lib/portfolio/aggregate';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 const put = vi.fn();
 let aggregationInput: AggregationInput;
+let wallets: Array<{ address: string; enabled: number; addedAt: number }> = [];
 
 vi.mock('lib/db', () => ({
   db: { snapshots: { put: (row: unknown) => put(row) }, settings: { get: async () => undefined } },
 }));
 
-// The real aggregation runs; only the reading of the tables is stubbed. That is the property worth
-// testing: a recorded point is the same computation the dashboard shows, not a second implementation.
+// The real aggregation and fact-cutting run; only the reading of the tables is stubbed. That is the
+// property worth testing: a recorded point stores the same input the dashboard aggregated, not a summary.
 vi.mock('lib/portfolio/load', () => ({
-  loadPortfolioSource: async () => ({}),
+  loadPortfolioSource: async () => ({ wallets }),
   buildAggregationInput: () => aggregationInput,
 }));
 
 const { recordCurrentSnapshot } = await import('lib/history/snapshot');
-const { aggregateTokens, aggregateNftCollections, calculateTotals } = await import('lib/portfolio/aggregate');
 
 const NATIVE = '0xeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee';
 const OWNER = '0x1111111111111111111111111111111111111111';
+const OWNER_B = '0x2222222222222222222222222222222222222222';
 
 const buildInput = (overrides: Partial<AggregationInput> = {}): AggregationInput => ({
   balances: [],
@@ -51,7 +51,16 @@ const withEthOnChainAndOnKraken = () =>
         token: NATIVE,
         standard: 'erc20',
         amount: '4000000000000000000',
-        updatedAt: Date.now(),
+        updatedAt: 0,
+      },
+      {
+        id: `1:${OWNER_B}:${NATIVE}`,
+        chainId: 1,
+        owner: OWNER_B,
+        token: NATIVE,
+        standard: 'erc20',
+        amount: '2000000000000000000',
+        updatedAt: 0,
       },
     ],
     tokens: [
@@ -64,127 +73,69 @@ const withEthOnChainAndOnKraken = () =>
         decimals: 18,
         coingeckoId: 'ethereum',
         isSpam: 0,
-        metadataUpdatedAt: Date.now(),
+        metadataUpdatedAt: 0,
       },
     ],
-    prices: [{ id: 'coingecko:ethereum', priceUsd: 3000, updatedAt: Date.now() }],
-    exchangeBalances: [{ id: 'kraken-1:ETH', accountId: 'kraken-1', asset: 'ETH', amount: '2', updatedAt: Date.now() }],
-    exchangeAccounts: [{ id: 'kraken-1', label: 'Kraken', exchange: 'kraken' }],
+    prices: [{ id: 'coingecko:ethereum', priceUsd: 2000, updatedAt: 0 }],
+    exchangeBalances: [{ id: 'acct:ETH', accountId: 'acct', asset: 'ETH', amount: '3', updatedAt: 0 }],
+    exchangeAccounts: [{ id: 'acct', label: 'Kraken', exchange: 'kraken' }],
     exchangeAssetCoingeckoIds: { ETH: 'ethereum' },
   });
 
-describe('recordCurrentSnapshot', () => {
-  beforeEach(() => {
-    put.mockReset();
-  });
+beforeEach(() => {
+  put.mockReset();
+  wallets = [
+    { address: OWNER, enabled: 1, addedAt: 0 },
+    { address: OWNER_B, enabled: 1, addedAt: 0 },
+  ];
+});
 
+describe('recordCurrentSnapshot', () => {
   it('records the same total the dashboard is showing', async () => {
     aggregationInput = withEthOnChainAndOnKraken();
+    await recordCurrentSnapshot(1_000);
 
-    const snapshot = await recordCurrentSnapshot(1_000);
-    const expected = calculateTotals(aggregateTokens(aggregationInput), aggregateNftCollections(aggregationInput));
-
-    expect(snapshot?.totalUsd).toBe(expected.totalUsd);
-    expect(snapshot?.totalUsd).toBe(18000);
-    expect(put).toHaveBeenCalledWith(snapshot);
+    const [snapshot] = put.mock.calls[0];
+    // 6 ETH on-chain + 3 ETH on Kraken, at $2,000.
+    expect(snapshot.totalUsd).toBe(18_000);
+    expect(snapshot.timestamp).toBe(1_000);
   });
 
-  it('keeps the on-chain and exchange split in its positions', async () => {
+  it('stores the balance rows with their owners, so a wallet can be taken back out', async () => {
     aggregationInput = withEthOnChainAndOnKraken();
+    await recordCurrentSnapshot(1_000);
 
-    const snapshot = await recordCurrentSnapshot(1_000);
-
-    expect(snapshot?.positions.map((position) => [position.kind, position.valueUsd])).toEqual([
-      ['token', 12000],
-      ['exchange', 6000],
+    const [snapshot] = put.mock.calls[0];
+    expect(snapshot.balances).toEqual([
+      { chainId: 1, owner: OWNER, token: NATIVE, amount: '4000000000000000000' },
+      { chainId: 1, owner: OWNER_B, token: NATIVE, amount: '2000000000000000000' },
     ]);
   });
 
-  it('stamps the snapshot with the moment it was asked for', async () => {
+  it('keeps the exchange holding on its account', async () => {
     aggregationInput = withEthOnChainAndOnKraken();
+    await recordCurrentSnapshot(1_000);
 
-    expect((await recordCurrentSnapshot(1_234))?.timestamp).toBe(1_234);
+    const [snapshot] = put.mock.calls[0];
+    expect(snapshot.exchangeBalances).toEqual([{ accountId: 'acct', asset: 'ETH', amount: '3' }]);
+    expect(snapshot.exchangeAccounts).toEqual([{ id: 'acct', label: 'Kraken', exchange: 'kraken' }]);
   });
 
-  // A first sync that failed everywhere looks exactly like an empty portfolio, and a zero written then is
-  // indistinguishable on the chart from a real one.
-  it('writes nothing when there is nothing held', async () => {
+  it('stamps the scope and the attributed wallets, including ones that held nothing', async () => {
+    aggregationInput = withEthOnChainAndOnKraken();
+    wallets.push({ address: '0x3333333333333333333333333333333333333333', enabled: 1, addedAt: 0 });
+    await recordCurrentSnapshot(1_000);
+
+    const [snapshot] = put.mock.calls[0];
+    expect(snapshot.attributedOwners).toEqual([OWNER, OWNER_B, '0x3333333333333333333333333333333333333333']);
+    expect(snapshot.scope?.wallets).toEqual(snapshot.attributedOwners);
+  });
+
+  it('refuses to record an empty portfolio rather than writing a false zero', async () => {
     aggregationInput = buildInput();
+    const result = await recordCurrentSnapshot(1_000);
 
-    expect(await recordCurrentSnapshot()).toBeUndefined();
+    expect(result).toBeUndefined();
     expect(put).not.toHaveBeenCalled();
-  });
-
-  // Hidden positions are excluded from the headline total, so they must be excluded here too.
-  it('leaves out positions the user has filtered away', async () => {
-    const input = withEthOnChainAndOnKraken();
-    aggregationInput = {
-      ...input,
-      overrides: [{ id: 'coin:ethereum', hidden: 1, updatedAt: Date.now() }],
-    };
-
-    expect(await recordCurrentSnapshot()).toBeUndefined();
-  });
-});
-
-// Attribution is written at the only moment it can be: a recorded point sums every wallet's holding into
-// one figure, and once summed a wallet cannot be taken back out.
-describe('what a recorded snapshot remembers about wallets', () => {
-  const OWNER_B = '0x2222222222222222222222222222222222222222';
-
-  const withTwoWallets = () => {
-    const input = withEthOnChainAndOnKraken();
-
-    return {
-      ...input,
-      balances: [
-        ...input.balances,
-        {
-          id: `1:${OWNER_B}:${NATIVE}`,
-          chainId: 1,
-          owner: OWNER_B,
-          token: NATIVE,
-          standard: 'erc20' as const,
-          amount: '2000000000000000000',
-          updatedAt: 0,
-        },
-      ],
-    };
-  };
-
-  it('records which wallet contributed what', async () => {
-    aggregationInput = withTwoWallets();
-    await recordCurrentSnapshot(1_000);
-
-    const [snapshot] = put.mock.calls[0];
-    const chainPosition = snapshot.positions.find((position: SnapshotPosition) => position.kind === 'token');
-
-    expect(chainPosition.amountByOwner).toEqual({ [OWNER.toLowerCase()]: 4, [OWNER_B.toLowerCase()]: 2 });
-  });
-
-  it('splits the amount it actually recorded, so a wallet can be taken back out of it', async () => {
-    aggregationInput = withTwoWallets();
-    await recordCurrentSnapshot(1_000);
-
-    const [snapshot] = put.mock.calls[0];
-    const chainPosition = snapshot.positions.find((position: SnapshotPosition) => position.kind === 'token');
-    const attributed = Object.values(chainPosition.amountByOwner as Record<string, number>).reduce(
-      (total, amount) => total + amount,
-      0,
-    );
-
-    expect(attributed).toBeCloseTo(chainPosition.amount);
-  });
-
-  // An exchange holding belongs to an account and a hand-entered one to nobody, so neither is affected by
-  // which wallets are tracked and neither carries a split.
-  it('leaves exchange positions unattributed', async () => {
-    aggregationInput = withTwoWallets();
-    await recordCurrentSnapshot(1_000);
-
-    const [snapshot] = put.mock.calls[0];
-    const exchangePosition = snapshot.positions.find((position: SnapshotPosition) => position.kind === 'exchange');
-
-    expect(exchangePosition.amountByOwner).toBeUndefined();
   });
 });

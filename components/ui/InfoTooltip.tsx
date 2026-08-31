@@ -19,6 +19,7 @@ const InfoTooltip = ({ tooltip }: Props) => (
       stroke="currentColor"
       aria-label="More information"
       role="img"
+      // biome-ignore lint/a11y/noNoninteractiveTabindex: the tooltip opens on focus, so keyboard users need to be able to reach the icon
       tabIndex={0}
       className="w-3.5 h-3.5 shrink-0 text-zinc-500 cursor-help focus:outline-none focus-visible:outline-2 focus-visible:outline-brand rounded-full"
     >

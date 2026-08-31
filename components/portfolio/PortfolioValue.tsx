@@ -12,25 +12,45 @@ import {
   withLivePoint,
 } from 'lib/history/periods';
 import { useCurrency } from 'lib/hooks/useCurrency';
+import { usePinnedSnapshot } from 'lib/hooks/usePinnedSnapshot';
 import type { SnapshotPoint } from 'lib/hooks/useSnapshots';
 import { cn } from 'lib/utils/classnames';
 import Link from 'next/link';
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 
 interface Props {
   totalUsd: number;
   points: SnapshotPoint[];
+  // The pinned snapshot's total as assembled under today's lens, when a point is pinned. Passed in rather
+  // than read from the stored row, because the stored figure was computed under the filters in force when
+  // the point was written and the sections below the chart show the assembled one.
+  pinnedTotalUsd?: number;
 }
 
 // The headline figure and the history behind it, in one place.
 //
 // They were two cards, which meant the number and the line describing how it got there were separated by
 // the width of the page. Reading one against the other is the whole point of having both.
-const PortfolioValue = ({ totalUsd, points }: Props) => {
+const PortfolioValue = ({ totalUsd, points, pinnedTotalUsd }: Props) => {
   const { formatValue } = useCurrency();
   const [range, setRange] = useState<ChartRange>('all');
+  const { snapshot: pinnedSnapshot, pinnedTimestamp, toggle, unpin } = usePinnedSnapshot();
 
-  const changes = useMemo(() => buildPeriodChanges(points, totalUsd), [points, totalUsd]);
+  // Pinned, the card describes that moment: its total as the headline, and the period changes measured
+  // up to it rather than up to now, so the figures beside the chart agree with the marker on it.
+  const shownTotalUsd = pinnedSnapshot ? (pinnedTotalUsd ?? pinnedSnapshot.totalUsd) : totalUsd;
+
+  const changes = useMemo(
+    () =>
+      pinnedSnapshot
+        ? buildPeriodChanges(
+            points.filter((point) => point.timestamp <= pinnedSnapshot.timestamp),
+            pinnedTotalUsd ?? pinnedSnapshot.totalUsd,
+            pinnedSnapshot.timestamp,
+          )
+        : buildPeriodChanges(points, totalUsd),
+    [points, totalUsd, pinnedSnapshot, pinnedTotalUsd],
+  );
 
   // Filtered first, then extended: "now" belongs to every range, including one whose recorded points have
   // all fallen out of it.
@@ -41,12 +61,47 @@ const PortfolioValue = ({ totalUsd, points }: Props) => {
 
   const hasChart = withLivePoint(points, totalUsd).length >= 2;
 
+  // Only stored points can be pinned. The rightmost point is often the synthetic "now" that withLivePoint
+  // appends, which resolves to no snapshot; pinning it would draw the marker while the page stayed live,
+  // and leave a ghost timestamp in the store. Clicking it reads as "the present", so it releases the pin.
+  const handlePointClick = (timestamp: number) => {
+    if (points.some((point) => point.timestamp === timestamp)) {
+      toggle(timestamp);
+    } else {
+      unpin();
+    }
+  };
+
+  // Narrowing the range can hide the pinned point, leaving the headline describing a marker the chart no
+  // longer shows. Jumping back to the full range keeps the chart honest about which point is pinned.
+  useEffect(() => {
+    if (pinnedTimestamp === undefined) return;
+    if (!filterPointsByRange(points, range).some((point) => point.timestamp === pinnedTimestamp)) {
+      setRange('all');
+    }
+  }, [pinnedTimestamp, points, range]);
+
   return (
     <div className="border border-zinc-200 dark:border-zinc-800 rounded-xl">
       <div className="flex flex-col md:flex-row">
         <div className={cn('p-5 md:w-64 md:shrink-0', hasChart && 'md:border-r border-zinc-200 dark:border-zinc-800')}>
-          <div className="text-xs text-zinc-500 mb-1.5">Total value</div>
-          <div className="text-3xl font-semibold tabular tracking-tight">{formatValue(totalUsd)}</div>
+          {pinnedSnapshot ? (
+            <div className="flex items-center justify-between gap-2 mb-1.5">
+              <span className="text-xs text-amber-700 dark:text-amber-500">
+                Snapshot · {formatDateTimeUtc(pinnedSnapshot.timestamp)}
+              </span>
+              <button
+                type="button"
+                onClick={unpin}
+                className="text-xs text-zinc-500 hover:text-black dark:hover:text-white shrink-0"
+              >
+                Back to live
+              </button>
+            </div>
+          ) : (
+            <div className="text-xs text-zinc-500 mb-1.5">Total value</div>
+          )}
+          <div className="text-3xl font-semibold tabular tracking-tight">{formatValue(shownTotalUsd)}</div>
 
           {/* Stacked rather than in a row. Five changes side by side needed the full width of the card,
               which is exactly what moving this beside the chart gives away. */}
@@ -90,7 +145,12 @@ const PortfolioValue = ({ totalUsd, points }: Props) => {
             {/* A range holding one point or none cannot draw a line, and an empty chart with a range
                 selector above it reads as broken rather than as empty. */}
             {visiblePoints.length >= 2 ? (
-              <ValueChart points={visiblePoints} height={200} />
+              <ValueChart
+                points={visiblePoints}
+                height={200}
+                onPointClick={handlePointClick}
+                pinnedTimestamp={pinnedTimestamp}
+              />
             ) : (
               <div className="flex items-center justify-center h-[200px] text-xs text-zinc-500">
                 No snapshots in this range yet.

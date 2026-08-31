@@ -92,6 +92,14 @@ export class PortfolioDatabase extends Dexie {
     this.version(4).stores({
       nftCollections: 'id, [chainId+address], chainId',
     });
+
+    // Snapshots changed shape entirely: they now store the portfolio's raw facts rather than rendered
+    // positions, so a pinned snapshot renders through the same aggregation as the live view. Old-format
+    // rows cannot be converted (they lost the facts at write time), so they are cleared; history rebuilds
+    // from syncs and the weekly backfill. Settings, wallets, ledgers and categories are untouched.
+    this.version(5)
+      .stores({})
+      .upgrade((transaction) => transaction.table('snapshots').clear());
   }
 }
 

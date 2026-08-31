@@ -3,7 +3,6 @@ import { NATIVE_TOKEN_ADDRESS } from 'lib/constants';
 import { db } from 'lib/db';
 import { coingeckoPriceKey, onChainPriceKey } from 'lib/db/keys';
 import type {
-  SnapshotPosition,
   StoredManualBalance,
   StoredManualLedgerEntry,
   StoredSnapshot,
@@ -29,6 +28,7 @@ import {
 } from 'lib/history/series';
 import { amountAt, groupEntriesByBalance } from 'lib/manual/balances';
 import { fetchCoinGeckoNftFloorHistory } from 'lib/nfts/coingecko';
+import { computeSnapshotTotalUsd } from 'lib/portfolio/snapshot-lens';
 import { resolveCoinGeckoIdsForSymbols } from 'lib/prices/assets';
 import {
   fetchHistoricalSeriesForCoin,
@@ -239,90 +239,179 @@ export const reconstructSnapshotAt = async (
   const nftFloorPrices = await getCurrentNftFloorPrices();
   const nftFloorHistory = await fetchNftFloorHistory(heldCollectionKeys, window, progress);
 
-  const positions: SnapshotPosition[] = [];
   progress.start(
     'valuing-positions',
     heldBalanceKeys.length + heldCollectionKeys.length + heldExchangeKeys.length + heldManualKeys.length,
   );
 
+  // From here the point is assembled as fact rows, the same shape a live snapshot stores, so the pinned
+  // view renders a reconstructed past through the identical aggregation. A reconstruction cannot say which
+  // wallet held what, so its rows carry an empty owner, which downstream reads as "unattributed".
+  const prices = new Map<string, number | null>();
+  const balances: StoredSnapshot['balances'] = [];
+  const tokenMetadata = new Map<string, StoredSnapshot['tokens'][number]>();
+
+  const priceOf = (seriesKey: string): number | null =>
+    priceAt(priceSeriesByKey.get(seriesKey) ?? { priceKey: seriesKey, points: [] }, timestamp);
+
+  // Contract holdings. Native coins are keyed by coin id in the series and are covered by the per-chain
+  // native reads below, so they are skipped here rather than written without a chain.
   for (const [priceKey, series] of balanceSeries) {
     const amount = series.amounts[0];
-    if (amount < dustThresholdAmount) continue;
+    if (amount < dustThresholdAmount || priceKey.startsWith('coingecko:')) continue;
 
-    const priceUsd = priceAt(priceSeriesByKey.get(priceKey) ?? { priceKey, points: [] }, timestamp);
-    positions.push({
-      priceKey,
-      symbol: series.symbol,
-      amount,
-      priceUsd,
-      valueUsd: priceUsd === null ? 0 : amount * priceUsd,
-      kind: 'token',
+    const [chainIdPart, address] = priceKey.split(':');
+    const token = tokensById.get(`${chainIdPart}:${address}`);
+    if (!token || token.decimals === undefined) continue;
+
+    balances.push({
+      chainId: Number(chainIdPart),
+      owner: '',
+      token: address,
+      amount: floatToRawUnits(amount, token.decimals),
     });
+    tokenMetadata.set(token.id, {
+      id: token.id,
+      chainId: token.chainId,
+      address: token.address,
+      symbol: token.symbol,
+      decimals: token.decimals,
+      coingeckoId: token.coingeckoId,
+    });
+    prices.set(priceKey, priceOf(priceKey));
+    if (token.coingeckoId) prices.set(`coingecko:${token.coingeckoId}`, priceOf(priceKey));
   }
+
+  // Native holdings, one row per chain, straight from the per-chain archive reads rather than from the
+  // series map where chains sharing a coin id have already been merged.
+  for (const nativeSeries of nativeBalances.series) {
+    const amount = nativeSeries.amounts[0];
+    if (amount === undefined || amount < dustThresholdAmount) continue;
+
+    const chain = getChainConfig(nativeSeries.chainId as never);
+    const decimals = chain?.getNativeTokenDecimals() ?? 18;
+    const nativeAddress = NATIVE_TOKEN_ADDRESS.toLowerCase();
+    const id = `${nativeSeries.chainId}:${nativeAddress}`;
+
+    balances.push({
+      chainId: nativeSeries.chainId,
+      owner: '',
+      token: nativeAddress,
+      amount: floatToRawUnits(amount, decimals),
+    });
+    tokenMetadata.set(id, {
+      id,
+      chainId: nativeSeries.chainId,
+      address: nativeAddress,
+      symbol: nativeSeries.symbol,
+      decimals,
+      coingeckoId: nativeSeries.coingeckoId,
+    });
+    prices.set(`coingecko:${nativeSeries.coingeckoId}`, priceOf(coingeckoPriceKey(nativeSeries.coingeckoId)));
+  }
+
+  // NFT holdings and their collections, floored historically where the plan allows, at today's floor
+  // otherwise. Which one was used is reported back, since it is the one figure that cannot always be
+  // historically correct.
+  const nftHoldings: StoredSnapshot['nftHoldings'] = [];
+  const nftCollectionFacts: StoredSnapshot['nftCollections'] = [];
 
   for (const [collectionKey, series] of nftSeries) {
     const count = series.counts[0];
     if (count === 0) continue;
 
-    // A historical floor is preferred; the current floor stands in only where no history was available.
+    const [chainIdPart, address] = collectionKey.split(':');
     const historicalFloor = nftFloorHistory.get(collectionKey);
     const floorPriceUsd =
       (historicalFloor ? priceAt(historicalFloor, timestamp) : null) ?? nftFloorPrices.get(collectionKey) ?? null;
 
-    positions.push({
-      priceKey: collectionKey,
-      symbol: series.name,
-      amount: count,
-      priceUsd: floorPriceUsd,
-      valueUsd: floorPriceUsd === null ? 0 : count * floorPriceUsd,
-      kind: 'nft',
+    nftHoldings.push({ chainId: Number(chainIdPart), collection: address, owner: '', count });
+    nftCollectionFacts.push({
+      id: collectionKey,
+      chainId: Number(chainIdPart),
+      address,
+      name: series.name,
+      floorPriceUsd,
     });
   }
 
-  for (const [priceKey, series] of exchangeSeries) {
-    const amount = series.amounts[0];
+  // Exchange holdings, replayed per account and asset straight from the ledger, so the row keeps the
+  // account it belongs to.
+  const exchangeRows = new Map<string, { accountId: string; asset: string; amount: number }>();
+  for (const entry of ledgerEntries) {
+    if (entry.timestamp > timestamp) continue;
+    const key = `${entry.accountId}:${entry.asset}`;
+    const existing = exchangeRows.get(key) ?? { accountId: entry.accountId, asset: entry.asset, amount: 0 };
+    const delta = Number(entry.amount);
+    if (Number.isFinite(delta)) existing.amount += delta;
+    exchangeRows.set(key, existing);
+  }
+
+  const heldExchangeRows = [...exchangeRows.values()].filter((row) => row.amount >= dustThresholdAmount);
+  const exchangeAssets = deduplicateArray(heldExchangeRows.map((row) => row.asset.toUpperCase()));
+  const exchangeCoinIds =
+    exchangeAssets.length > 0 ? await resolveCoinGeckoIdsForSymbols(exchangeAssets) : new Map<string, string>();
+
+  const exchangeAssetCoingeckoIds: Record<string, string> = {};
+  for (const [asset, coingeckoId] of exchangeCoinIds) {
+    exchangeAssetCoingeckoIds[asset] = coingeckoId;
+    prices.set(`coingecko:${coingeckoId}`, priceOf(`exchange-asset:${asset}`));
+  }
+
+  // Manual holdings at their replayed amounts, priced under their coins.
+  const manualHoldingRows: StoredSnapshot['manualHoldings'] = [];
+  for (const balance of manualBalances) {
+    const amount = manualSeries.get(`manual:${balance.id}`)?.amounts[0] ?? 0;
     if (amount < dustThresholdAmount) continue;
 
-    const priceUsd = priceAt(priceSeriesByKey.get(priceKey) ?? { priceKey, points: [] }, timestamp);
-    positions.push({
-      priceKey,
-      symbol: series.symbol,
+    manualHoldingRows.push({
+      balanceId: balance.id,
+      symbol: balance.symbol,
+      coingeckoId: balance.coingeckoId,
+      location: balance.location,
+      wallet: balance.wallet,
       amount,
-      priceUsd,
-      valueUsd: priceUsd === null ? 0 : amount * priceUsd,
-      kind: 'exchange',
     });
+    if (balance.coingeckoId) {
+      prices.set(`coingecko:${balance.coingeckoId}`, priceOf(`manual:${balance.id}`));
+    }
   }
 
-  for (const [priceKey, series] of manualSeries) {
-    const amount = series.amounts[0];
-    if (amount < dustThresholdAmount) continue;
+  const snapshot: StoredSnapshot = {
+    timestamp,
+    totalUsd: 0,
+    createdAt: Date.now(),
+    balances,
+    tokens: [...tokenMetadata.values()],
+    prices: [...prices.entries()].map(([id, priceUsd]) => ({ id, priceUsd })),
+    nftCollections: nftCollectionFacts,
+    nftHoldings,
+    exchangeBalances: heldExchangeRows.map((row) => ({
+      accountId: row.accountId,
+      asset: row.asset,
+      amount: String(row.amount),
+    })),
+    exchangeAccounts: enabledAccounts.map((account) => ({
+      id: account.id,
+      label: account.label,
+      exchange: account.exchange,
+    })),
+    exchangeAssetCoingeckoIds,
+    manualHoldings: manualHoldingRows,
+  };
 
-    const priceUsd = priceAt(priceSeriesByKey.get(priceKey) ?? { priceKey, points: [] }, timestamp);
-    positions.push({
-      priceKey,
-      symbol: series.symbol,
-      amount,
-      priceUsd,
-      valueUsd: priceUsd === null ? 0 : amount * priceUsd,
-      kind: 'manual',
-    });
-  }
+  // Valued the way the pinned view will value it, under today's filters, so the chart's number and the
+  // opened point can never disagree.
+  snapshot.totalUsd = await computeSnapshotTotalUsd(snapshot);
 
-  // Nothing held is reported rather than written. It is the honest answer for a date before the wallet
-  // held anything, and it is also what a portfolio with no stored history looks like, so writing a zero
-  // would turn "we do not know" into a claim.
+  const positionCount = balances.length + nftHoldings.length + heldExchangeRows.length + manualHoldingRows.length;
+
   // Nothing held, or nothing that could be valued. A point worth zero is indistinguishable on the chart
   // from a portfolio that really was empty, which is the same reason recordCurrentSnapshot refuses one.
-  const totalUsd = positions.reduce((total, position) => total + position.valueUsd, 0);
-  if (positions.length === 0 || totalUsd === 0) {
-    // Reached in the middle of the valuing phase, so the step list has to be closed out or the UI sits on
-    // a phase that will never finish.
+  if (positionCount === 0 || snapshot.totalUsd === 0) {
     progress.skipRemaining();
     return { ...empty, status: 'no-holdings' };
   }
-
-  const snapshot: StoredSnapshot = { timestamp, totalUsd, createdAt: Date.now(), positions };
 
   progress.complete('valuing-positions');
 
@@ -338,7 +427,7 @@ export const reconstructSnapshotAt = async (
     status: 'created',
     timestamp,
     totalUsd: snapshot.totalUsd,
-    positionCount: positions.length,
+    positionCount,
     unpricedAssetCount,
     chainsWithoutNativeHistory: nativeBalances.chainsWithoutArchiveAccess,
     nftCollectionsAtCurrentFloor: heldCollectionKeys.filter(
@@ -541,4 +630,14 @@ const getCurrentNftFloorPrices = async (): Promise<Map<string, number>> => {
       .filter((collection) => collection.floorPriceUsd !== undefined && collection.floorPriceUsd !== null)
       .map((collection) => [collection.id, collection.floorPriceUsd as number]),
   );
+};
+
+// A replayed float amount converted back to raw units, so reconstructed and recorded snapshots share one
+// row shape. String arithmetic rather than BigInt(amount * 10 ** decimals), which overflows the float long
+// before it overflows the token.
+const floatToRawUnits = (amount: number, decimals: number): string => {
+  const fractionDigits = Math.min(decimals, 20);
+  const [whole, fraction = ''] = Math.max(0, amount).toFixed(fractionDigits).split('.');
+  const raw = `${whole}${fraction.padEnd(decimals, '0')}`.replace(/^0+(?=\d)/, '');
+  return raw === '' ? '0' : raw;
 };

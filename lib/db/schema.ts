@@ -171,25 +171,6 @@ export interface StoredHistoricalPrice {
   priceUsd: number;
 }
 
-export interface SnapshotPosition {
-  // Identifies the position within the snapshot. A recorded point uses the asset's identity key, since it
-  // is aggregated the way the dashboard aggregates it; a reconstructed point uses the price key it valued
-  // the position with, which is the finest granularity its event history gives it.
-  priceKey: string;
-  symbol: string;
-  amount: number;
-  priceUsd: number | null;
-  valueUsd: number;
-  kind: 'token' | 'nft' | 'exchange' | 'manual';
-  // The part of `amount` each tracked wallet contributed, keyed by lowercase address.
-  //
-  // This is what lets a wallet be taken back out of a recorded point by arithmetic rather than by
-  // rebuilding it from replayed events. Only ever present on `token` and `nft` positions: an exchange or
-  // hand-entered holding belongs to no wallet. `amount` minus the sum of these is the untagged remainder,
-  // contributed by wallets measured before attribution existed and no longer separable.
-  amountByOwner?: Record<string, number>;
-}
-
 // What a snapshot measured, as opposed to what it found.
 //
 // Recorded so that a later run can tell whether a point is still measuring the same portfolio the app is
@@ -204,22 +185,105 @@ export interface SnapshotScope {
   includeTestnets: boolean;
 }
 
+// One wallet's holding of one token on one chain at the snapshot's moment, in raw units.
+//
+// Snapshots store the portfolio's facts rather than a rendered summary: the same rows the live dashboard
+// aggregates, frozen. Rendering a pinned snapshot then runs the same aggregation the live view runs, so
+// the two can never drift apart, and per-chain breakdowns work for the past exactly as for the present.
+// Keeping the owner on every row is also what makes wallet-scope corrections plain arithmetic: removing a
+// wallet from a point is dropping its rows.
+export interface SnapshotChainBalance {
+  chainId: number;
+  owner: string;
+  token: string;
+  // Raw units as a decimal string, exactly as balances are stored live. A reconstructed point converts its
+  // replayed amounts back to raw units, so both kinds of snapshot share one shape.
+  amount: string;
+}
+
+// The metadata needed to value and label a held token, frozen so a snapshot stays renderable even if the
+// live tokens table forgets the token. Logos are deliberately absent: they are cosmetic, current, and
+// resolved from the live table at render time with a graceful fallback.
+export interface SnapshotTokenMetadata {
+  id: string;
+  chainId: number;
+  address: string;
+  symbol?: string;
+  decimals?: number;
+  coingeckoId?: string;
+  isSpam?: 0 | 1;
+  spamReason?: string;
+}
+
+export interface SnapshotPrice {
+  // The price-key space the live prices table uses: `coingecko:<id>` or `<chainId>:<address>`.
+  id: string;
+  priceUsd: number | null;
+}
+
+export interface SnapshotNftCollectionFact {
+  id: string;
+  chainId: number;
+  address: string;
+  name?: string;
+  floorPriceUsd: number | null;
+}
+
+export interface SnapshotNftHolding {
+  chainId: number;
+  collection: string;
+  owner: string;
+  count: number;
+}
+
+export interface SnapshotExchangeBalance {
+  accountId: string;
+  asset: string;
+  amount: string;
+}
+
+// Enough of the account to label its holdings if the account itself is later removed.
+export interface SnapshotExchangeAccountFact {
+  id: string;
+  label: string;
+  exchange: ExchangeKind;
+}
+
+export interface SnapshotManualHolding {
+  balanceId: string;
+  symbol: string;
+  coingeckoId?: string;
+  location: string;
+  wallet?: string;
+  amount: number;
+}
+
 export interface StoredSnapshot {
   // The moment the snapshot describes, as a millisecond timestamp, and the primary key. Either the moment
   // a sync finished or a past moment the user asked to reconstruct, so re-adding the same moment replaces
   // it rather than producing a second point on top of the first.
   timestamp: number;
+  // What the visible portfolio totalled, under the filters in force when the point was written. Stored so
+  // the chart never has to aggregate every point to draw a line.
   totalUsd: number;
   createdAt: number;
-  // Positions are stored inline rather than in their own table: a snapshot is always read whole, and the
-  // row count would otherwise grow by the size of the portfolio every single week.
-  positions: SnapshotPosition[];
+  balances: SnapshotChainBalance[];
+  tokens: SnapshotTokenMetadata[];
+  prices: SnapshotPrice[];
+  nftCollections: SnapshotNftCollectionFact[];
+  nftHoldings: SnapshotNftHolding[];
+  exchangeBalances: SnapshotExchangeBalance[];
+  exchangeAccounts: SnapshotExchangeAccountFact[];
+  // The ticker-to-coin resolution as it stood, frozen because it is part of how the figures were valued.
+  exchangeAssetCoingeckoIds: Record<string, string>;
+  manualHoldings: SnapshotManualHolding[];
+  // Units of each currency per US dollar at the time, for valuing cash held on exchanges.
+  fiatRatesPerUsd?: Record<string, number>;
   scope?: SnapshotScope;
-  // The wallets whose contribution is recorded in `amountByOwner` and can therefore be reversed exactly.
-  //
-  // Stored rather than derived from the position maps: a wallet that was measured but happened to hold
-  // nothing at that moment appears in no map, and reading that as "not attributed" would leave it being
-  // folded in again on every run.
+  // The wallets whose holdings this point can account for. Owners appear on the rows themselves; this
+  // list additionally names wallets that were measured and held nothing, so they are not re-measured as
+  // though they were never looked at. An empty owner string on a row means a reconstruction that could
+  // not attribute it.
   attributedOwners?: string[];
 }
 

@@ -18,7 +18,20 @@ const { backfillWeeklySnapshots, weeklyMondayMoments } = await import('lib/histo
 const NOW = Date.UTC(2026, 7, 28, 14, 30);
 const WEEK = 7 * 24 * 60 * 60 * 1000;
 
-const snapshot = (timestamp: number): StoredSnapshot => ({ timestamp, totalUsd: 1, createdAt: 0, positions: [] });
+const snapshot = (timestamp: number): StoredSnapshot => ({
+  timestamp,
+  totalUsd: 1,
+  createdAt: 0,
+  balances: [],
+  tokens: [],
+  prices: [],
+  nftCollections: [],
+  nftHoldings: [],
+  exchangeBalances: [],
+  exchangeAccounts: [],
+  exchangeAssetCoingeckoIds: {},
+  manualHoldings: [],
+});
 
 const created = { status: 'created', timestamp: 0, totalUsd: 1 };
 

@@ -36,6 +36,9 @@ vi.mock('lib/db', () => ({
     snapshots: { put: vi.fn() },
     manualBalances: { where: () => ({ equals: () => ({ toArray: async () => [] }) }) },
     manualLedger: { toArray: async () => [] },
+    // The lens the reconstructed total is assembled under: empty preferences, no live artwork.
+    tokenOverrides: { toArray: async () => [] },
+    categoryAssignments: { toArray: async () => [] },
     settings: { get: async () => undefined },
   },
 }));

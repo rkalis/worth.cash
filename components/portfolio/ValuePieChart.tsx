@@ -61,7 +61,9 @@ const ValuePieChart = ({ entries, totalUsd, height = 260, emptyMessage = 'Nothin
     <div className="flex flex-col sm:flex-row items-center gap-4">
       <div className="shrink-0" style={{ width: height, height }}>
         <ResponsiveContainer width="100%" height="100%">
-          <PieChart>
+          {/* The accessibility layer makes the chart focusable and draws the browser's focus ring around it
+              on click. The list beside the donut carries every figure, so the chart is decoration. */}
+          <PieChart accessibilityLayer={false}>
             <Pie
               data={entries}
               dataKey="valueUsd"

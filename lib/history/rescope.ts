@@ -1,18 +1,22 @@
+import { getChainConfig } from 'lib/chains';
 import { createEnabledChainFilter } from 'lib/chains/enabled';
+import { NATIVE_TOKEN_ADDRESS } from 'lib/constants';
 import { db } from 'lib/db';
-import type { SnapshotPosition, SnapshotScope, StoredSnapshot, StoredToken, StoredWallet } from 'lib/db/schema';
+import type {
+  SnapshotChainBalance,
+  SnapshotNftHolding,
+  SnapshotScope,
+  SnapshotTokenMetadata,
+  StoredSnapshot,
+  StoredToken,
+  StoredWallet,
+} from 'lib/db/schema';
 import { loadSettings } from 'lib/db/settings';
-import { subtractOwners } from 'lib/history/attribution';
 import { resolveBlocksForTimestamps } from 'lib/history/blocks';
 import { readHistoricalNativeBalances } from 'lib/history/native-balances';
 import { currentWalletScope, diffWallets, normaliseOwners, scopeMatches, scopeMeasuredBy } from 'lib/history/scope';
-import {
-  type BalanceSeries,
-  buildNftPositionSeries,
-  buildTokenBalanceSeries,
-  mergeNativeBalanceSeries,
-  type NftSeries,
-} from 'lib/history/series';
+import { buildNftPositionSeries, buildTokenBalanceSeries } from 'lib/history/series';
+import { computeSnapshotTotalUsd } from 'lib/portfolio/snapshot-lens';
 import {
   fetchHistoricalSeriesForCoin,
   fetchHistoricalSeriesForContract,
@@ -22,7 +26,7 @@ import {
 } from 'lib/prices/historical';
 import { deduplicateArray } from 'lib/utils';
 import { mapAsyncBounded } from 'lib/utils/promises';
-import { getAddress } from 'viem';
+import { formatUnits, getAddress } from 'viem';
 
 export type WalletScopeMethod = 'subtract' | 'fold-in' | 'rebuild';
 
@@ -50,7 +54,7 @@ export interface WalletScopeResult {
   // changes a record without changing the chart, and should not be reported as if it had.
   snapshotsChanged: number;
   // Points that still count a wallet you no longer track, and cannot be corrected by arithmetic because
-  // they were recorded before the app noted who contributed what.
+  // their rows do not say who contributed them.
   snapshotsWithUnattributedRemovals: number;
   // Points left alone because correcting them would have emptied them.
   snapshotsWouldEmpty: number;
@@ -65,8 +69,8 @@ export interface WalletScopeResult {
 export interface WalletScopeOptions {
   // Reports what would change and writes nothing.
   dryRun?: boolean;
-  // Rebuilds points whose scope only *looks* right. The one way to correct a wallet removed before the app
-  // started recording attribution, and the only path that replaces measured balances with replayed ones.
+  // Rebuilds points whose scope only *looks* right. The one way to correct a wallet removed before its
+  // rows were attributed, and the only path that replaces measured balances with replayed ones.
   rebuildUnstamped?: boolean;
   onProgress?: (progress: WalletScopeProgress) => void;
 }
@@ -76,27 +80,12 @@ const PRICE_FETCH_CONCURRENCY = 3;
 
 // Makes the history measure the same portfolio the app measures today.
 //
-// A snapshot records what was found, not what was looked at, so adding a wallet leaves every existing point
-// silently measuring a smaller portfolio, and the first sync afterwards draws a step that looks like a gain
-// and is not. This corrects the record rather than the arithmetic: it changes which wallets a point counts,
-// and nothing else.
+// Snapshots store per-owner rows, which is what makes this mostly arithmetic: removing a wallet from a
+// point is dropping its rows, and adding one is inserting rows replayed from its stored events. Only rows
+// a reconstruction wrote, whose owner is blank, cannot be taken apart, and those need the opt-in rebuild.
 //
-// Two prohibitions, the same ones the manual reprocess states:
-//
-//   - It never creates a snapshot and never deletes one. Which moments are worth recording is the user's
-//     decision, and inventing or dropping points here would put figures on the chart they never asked for.
-//   - It never touches an `exchange` or `manual` position. Those belong to no wallet and have their own
-//     lifecycle.
-//
-// Three mechanisms, chosen per snapshot, in order of how much they cost the truth:
-//
-//   - `subtract`: the point records who contributed what, so a wallet's share comes out by arithmetic at
-//     the price already recorded. Exact, and not a single network request.
-//   - `fold-in`: a newly tracked wallet's history is replayed and merged in. Every figure already in the
-//     point stays exactly as it was read from the chain; only the new wallet's part is an estimate.
-//   - `rebuild`: everything on-chain is replayed from the wallets that remain. The only thing that can
-//     correct a wallet removed before attribution existed, and the only one that replaces measured balances
-//     with replayed ones, so it is opt-in and never reached by default.
+// Two prohibitions, the same ones the manual reprocess states: it never creates a snapshot and never
+// deletes one, and it never touches exchange or manual rows, which belong to no wallet.
 export const reprocessWalletScope = async (options: WalletScopeOptions = {}): Promise<WalletScopeResult> => {
   const snapshots = await db.snapshots.orderBy('timestamp').toArray();
 
@@ -119,7 +108,7 @@ export const reprocessWalletScope = async (options: WalletScopeOptions = {}): Pr
 
   const wallets = await db.wallets.toArray();
 
-  // With nothing tracked there is no scope to match. Continuing would strip every attributed position and
+  // With nothing tracked there is no scope to match. Continuing would strip every attributed row and
   // flatten the chart to whatever sits on exchanges.
   if (wallets.length === 0) return { ...empty, status: 'no-wallets' };
 
@@ -135,21 +124,18 @@ export const reprocessWalletScope = async (options: WalletScopeOptions = {}): Pr
   ).length;
 
   if (drifted.length === 0) {
-    // Nothing correctable. Which of those two situations it is matters: one means the history already
-    // agrees with the present, the other means it does not and only a rebuild can make it.
     const status = snapshotsWithUnattributedRemovals > 0 ? 'needs-rebuild' : 'in-scope';
     return { ...empty, status, snapshotsWithUnattributedRemovals };
   }
 
-  // One replay per group rather than one per snapshot. Every series builder walks its events once while
-  // advancing through the timestamps, and a price series covers a range, so asking about a hundred moments
-  // together costs barely more than asking about one.
+  // One replay per group rather than one per snapshot: the series builders walk their events once while
+  // advancing through the timestamps, so a hundred moments cost barely more than one.
   const foldIn = drifted.filter((plan) => plan.method === 'fold-in');
   const rebuild = drifted.filter((plan) => plan.method === 'rebuild');
 
   const foldInReplay =
     foldIn.length > 0
-      ? await replayOwners(
+      ? await replayOwnerRows(
           foldIn.map((plan) => plan.snapshot.timestamp),
           deduplicateArray(foldIn.flatMap((plan) => plan.added)),
           spam.dustThresholdAmount,
@@ -159,7 +145,7 @@ export const reprocessWalletScope = async (options: WalletScopeOptions = {}): Pr
 
   const rebuildReplay =
     rebuild.length > 0
-      ? await replayOwners(
+      ? await replayOwnerRows(
           rebuild.map((plan) => plan.snapshot.timestamp),
           current.wallets,
           spam.dustThresholdAmount,
@@ -167,11 +153,7 @@ export const reprocessWalletScope = async (options: WalletScopeOptions = {}): Pr
         )
       : undefined;
 
-  const tokensById = new Map((await db.tokens.toArray()).map((token) => [token.id, token]));
-
-  // Prices come from the snapshots themselves wherever possible; only assets no point has ever priced need
-  // asking about. See `resolvePrices`.
-  const historicalPrices = await resolvePrices([foldInReplay, rebuildReplay], plans, tokensById, options.onProgress);
+  const historicalPrices = await resolveResidualPrices([foldInReplay, rebuildReplay], plans, options.onProgress);
 
   const result: WalletScopeResult = {
     ...empty,
@@ -186,54 +168,40 @@ export const reprocessWalletScope = async (options: WalletScopeOptions = {}): Pr
   const updated: StoredSnapshot[] = [];
   const preview: WalletScopePreviewEntry[] = [];
 
-  drifted.forEach((plan, index) => {
+  for (const [index, plan] of drifted.entries()) {
     const replay = plan.method === 'rebuild' ? rebuildReplay : foldInReplay;
-    const timestampIndex =
+    const momentIndex =
       plan.method === 'rebuild'
         ? rebuild.findIndex((entry) => entry.snapshot.timestamp === plan.snapshot.timestamp)
         : foldIn.findIndex((entry) => entry.snapshot.timestamp === plan.snapshot.timestamp);
 
-    const rebuilt = buildPositions(
-      plan,
-      replay,
-      timestampIndex,
-      tokensById,
-      historicalPrices,
-      spam.dustThresholdAmount,
-    );
-    if (!rebuilt) {
+    const corrected = buildCorrectedSnapshot(plan, replay, momentIndex, historicalPrices, current);
+    if (!corrected) {
       result.snapshotsWouldEmpty += 1;
-      return;
+      continue;
     }
 
     if (plan.method === 'subtract') result.snapshotsSubtracted += 1;
     if (plan.method === 'fold-in') result.snapshotsFoldedIn += 1;
     if (plan.method === 'rebuild') result.snapshotsRebuilt += 1;
 
-    result.unpricedPositionCount += rebuilt.positions.filter(
-      (position) => position.priceUsd === null && position.kind !== 'exchange' && position.kind !== 'manual',
-    ).length;
+    result.unpricedPositionCount += corrected.unpricedCount;
 
-    const totalUsd = rebuilt.positions.reduce((total, position) => total + position.valueUsd, 0);
-    if (Math.abs(totalUsd - plan.snapshot.totalUsd) > 0.005) result.snapshotsChanged += 1;
+    // Valued through the same aggregation the pinned view renders with, under today's filters.
+    corrected.snapshot.totalUsd = await computeSnapshotTotalUsd(corrected.snapshot);
+
+    if (Math.abs(corrected.snapshot.totalUsd - plan.snapshot.totalUsd) > 0.005) result.snapshotsChanged += 1;
 
     preview.push({
       timestamp: plan.snapshot.timestamp,
       totalUsdBefore: plan.snapshot.totalUsd,
-      totalUsdAfter: totalUsd,
+      totalUsdAfter: corrected.snapshot.totalUsd,
       method: plan.method as WalletScopeMethod,
     });
 
-    updated.push({
-      ...plan.snapshot,
-      totalUsd,
-      positions: rebuilt.positions,
-      scope: current,
-      attributedOwners: rebuilt.attributedOwners,
-    });
-
+    updated.push(corrected.snapshot);
     options.onProgress?.({ phase: 'updating-snapshots', completed: index + 1, total: drifted.length });
-  });
+  }
 
   if (options.dryRun) return { ...result, preview };
 
@@ -262,7 +230,15 @@ const planFor = (
   const measured = scopeMeasuredBy(snapshot, wallets, current);
   const { added, removed } = diffWallets(measured.wallets, current.wallets);
 
-  const attributed = new Set(snapshot.attributedOwners ?? []);
+  // A wallet is removable exactly when its rows carry its address. Reconstructed rows carry none, and the
+  // explicit list additionally covers wallets that were measured and held nothing.
+  const rowOwners = new Set([
+    ...(snapshot.balances ?? []).map((balance) => balance.owner),
+    ...(snapshot.nftHoldings ?? []).map((holding) => holding.owner),
+  ]);
+  rowOwners.delete('');
+  const attributed = new Set([...(snapshot.attributedOwners ?? []), ...rowOwners]);
+
   const removableNow = removed.filter((owner) => attributed.has(owner));
   const unattributedRemovals = removed.filter((owner) => !attributed.has(owner));
 
@@ -277,43 +253,38 @@ const planFor = (
   // without asking. Reported instead, and corrected only when they ask for it.
   if (unattributedRemovals.length > 0) return plan;
 
-  // Already measuring what the app measures. Nothing to do, and deliberately not restamped: rewriting a row
-  // to record an inference as though it were observed would turn a guess into a claim.
   if (scopeMatches(measured, current)) return plan;
 
   // The chain axis moved without the wallets moving. Replaying is the only way to apply that.
   return { ...plan, method: 'rebuild' };
 };
 
-interface OwnerReplay {
-  balanceSeries: Map<string, BalanceSeries>;
-  amountByOwnerByKey: Map<string, Array<Record<string, number>>>;
-  nftSeries: Map<string, NftSeries>;
-  nftCountByOwnerByKey: Map<string, Array<Record<string, number>>>;
+interface OwnerRowReplay {
+  // One entry per requested moment, index-aligned with the timestamps handed in.
+  balancesByMoment: SnapshotChainBalance[][];
+  nftHoldingsByMoment: SnapshotNftHolding[][];
+  tokenMetadata: Map<string, SnapshotTokenMetadata>;
+  collectionNames: Map<string, string>;
   chainsWithoutArchiveState: number[];
 }
 
-// Replays a set of wallets over a set of moments, keeping each wallet's contribution separate.
-//
-// Per owner rather than all at once, for two reasons. It is what makes the result attributable, so a wallet
-// folded in today can be taken back out tomorrow by arithmetic. And it fixes a real defect in the combined
-// replay: the series builder groups events by contract with the owner absent from the key and clamps the
-// combined running balance at zero, so one wallet's unmatched outbound transfer can cancel another wallet's
-// genuine holding. Replayed separately, each wallet is clamped alone.
-const replayOwners = async (
+// Replays a set of wallets over a set of moments, producing the same per-owner rows a live snapshot
+// stores. Per owner rather than combined, so each wallet's running balance is clamped alone and every row
+// says whose it is: a wallet folded in today can be taken back out tomorrow by dropping its rows.
+const replayOwnerRows = async (
   timestamps: number[],
   owners: string[],
   dustThresholdAmount: number,
   onProgress?: (progress: WalletScopeProgress) => void,
-): Promise<OwnerReplay> => {
+): Promise<OwnerRowReplay> => {
   const lowercaseOwners = normaliseOwners(owners);
 
-  const [events, balances, cursors, settings, collectionNames] = await Promise.all([
+  const [events, storedBalances, cursors, settings, collections] = await Promise.all([
     db.transferEvents.where('owner').anyOf(lowercaseOwners).toArray(),
     db.balances.where('owner').anyOf(lowercaseOwners).toArray(),
     db.syncCursors.where('owner').anyOf(lowercaseOwners).toArray(),
     loadSettings(),
-    getCollectionNames(),
+    db.nftCollections.toArray(),
   ]);
 
   // Every chain these wallets have touched, from three sources because no one of them is complete: events
@@ -322,7 +293,7 @@ const replayOwners = async (
   const isChainEnabled = createEnabledChainFilter(settings.sync);
   const chainIds = deduplicateArray([
     ...events.map((event) => event.chainId),
-    ...balances.map((balance) => balance.chainId),
+    ...storedBalances.map((balance) => balance.chainId),
     ...cursors.map((cursor) => cursor.chainId),
   ]).filter(isChainEnabled);
 
@@ -331,11 +302,13 @@ const replayOwners = async (
   );
 
   const tokensById = new Map((await db.tokens.toArray()).map((token) => [token.id, token]));
+  const collectionNames = new Map(
+    collections.map((collection) => [collection.id, collection.name ?? collection.symbol ?? collection.address]),
+  );
 
-  const balanceSeries = new Map<string, BalanceSeries>();
-  const amountByOwnerByKey = new Map<string, Array<Record<string, number>>>();
-  const nftSeries = new Map<string, NftSeries>();
-  const nftCountByOwnerByKey = new Map<string, Array<Record<string, number>>>();
+  const balancesByMoment: SnapshotChainBalance[][] = timestamps.map(() => []);
+  const nftHoldingsByMoment: SnapshotNftHolding[][] = timestamps.map(() => []);
+  const tokenMetadata = new Map<string, SnapshotTokenMetadata>();
   const chainsWithoutArchiveState: number[] = [];
 
   let completedOwners = 0;
@@ -343,275 +316,275 @@ const replayOwners = async (
   await mapAsyncBounded(lowercaseOwners, OWNER_REPLAY_CONCURRENCY, async (owner) => {
     const ownerEvents = events.filter((event) => event.owner === owner);
 
-    const ownerBalances = buildTokenBalanceSeries(
+    // Contract holdings from the event replay. Native coins are keyed by coin id in the series and come
+    // from the archive reads below instead, where their chain identity survives.
+    const ownerSeries = buildTokenBalanceSeries(
       ownerEvents.filter((event) => event.standard === 'erc20'),
       timestamps,
       blocksByChain,
       tokensById,
     );
 
-    // Native holdings emit no logs, so they come from historical chain state rather than from the replay.
+    for (const [priceKey, series] of ownerSeries) {
+      if (priceKey.startsWith('coingecko:')) continue;
+
+      const token = tokensById.get(priceKey);
+      if (!token || token.decimals === undefined) continue;
+
+      tokenMetadata.set(token.id, {
+        id: token.id,
+        chainId: token.chainId,
+        address: token.address,
+        symbol: token.symbol,
+        decimals: token.decimals,
+        coingeckoId: token.coingeckoId,
+        isSpam: token.isSpam,
+        spamReason: token.spamReason,
+      });
+
+      series.amounts.forEach((amount, momentIndex) => {
+        if (amount < dustThresholdAmount) return;
+        balancesByMoment[momentIndex].push({
+          chainId: token.chainId,
+          owner,
+          token: token.address,
+          amount: floatToRawUnits(amount, token.decimals as number),
+        });
+      });
+    }
+
     const native = await readHistoricalNativeBalances(chainIds, [getAddress(owner)], timestamps, blocksByChain).catch(
       () => ({ series: [], chainsWithoutArchiveAccess: chainIds }),
     );
-    for (const series of native.series) mergeNativeBalanceSeries(ownerBalances, series);
     chainsWithoutArchiveState.push(...native.chainsWithoutArchiveAccess);
 
-    for (const [priceKey, series] of ownerBalances) {
-      mergeSeries(balanceSeries, priceKey, series, timestamps.length);
-      recordSplit(amountByOwnerByKey, priceKey, owner, series.amounts, timestamps.length, dustThresholdAmount);
+    for (const nativeSeries of native.series) {
+      const chain = getChainConfig(nativeSeries.chainId as never);
+      const decimals = chain?.getNativeTokenDecimals() ?? 18;
+      const nativeAddress = NATIVE_TOKEN_ADDRESS.toLowerCase();
+      const id = `${nativeSeries.chainId}:${nativeAddress}`;
+
+      tokenMetadata.set(id, {
+        id,
+        chainId: nativeSeries.chainId,
+        address: nativeAddress,
+        symbol: nativeSeries.symbol,
+        decimals,
+        coingeckoId: nativeSeries.coingeckoId,
+      });
+
+      nativeSeries.amounts.forEach((amount, momentIndex) => {
+        if (amount === undefined || amount < dustThresholdAmount) return;
+        balancesByMoment[momentIndex].push({
+          chainId: nativeSeries.chainId,
+          owner,
+          token: nativeAddress,
+          amount: floatToRawUnits(amount, decimals),
+        });
+      });
     }
 
     const ownerNfts = buildNftPositionSeries(ownerEvents, timestamps, blocksByChain, collectionNames);
     for (const [collectionKey, series] of ownerNfts) {
-      const existing = nftSeries.get(collectionKey);
-      if (existing) {
-        existing.counts = existing.counts.map((count, index) => count + (series.counts[index] ?? 0));
-      } else {
-        nftSeries.set(collectionKey, { ...series, counts: [...series.counts] });
-      }
+      const [chainIdPart, address] = collectionKey.split(':');
 
-      recordSplit(nftCountByOwnerByKey, collectionKey, owner, series.counts, timestamps.length, 1);
+      series.counts.forEach((count, momentIndex) => {
+        if (count === 0) return;
+        nftHoldingsByMoment[momentIndex].push({
+          chainId: Number(chainIdPart),
+          collection: address,
+          owner,
+          count,
+        });
+      });
     }
 
     completedOwners += 1;
-    onProgress?.({
-      phase: 'reading-native-balances',
-      completed: completedOwners,
-      total: lowercaseOwners.length,
-    });
+    onProgress?.({ phase: 'reading-native-balances', completed: completedOwners, total: lowercaseOwners.length });
   });
 
   return {
-    balanceSeries,
-    amountByOwnerByKey,
-    nftSeries,
-    nftCountByOwnerByKey,
+    balancesByMoment,
+    nftHoldingsByMoment,
+    tokenMetadata,
+    collectionNames,
     chainsWithoutArchiveState: deduplicateArray(chainsWithoutArchiveState),
   };
 };
 
-const mergeSeries = (target: Map<string, BalanceSeries>, key: string, series: BalanceSeries, length: number): void => {
-  const existing = target.get(key);
-
-  if (existing) {
-    existing.amounts = existing.amounts.map((amount, index) => amount + (series.amounts[index] ?? 0));
-    return;
-  }
-
-  target.set(key, { symbol: series.symbol, amounts: Array.from({ length }, (_, index) => series.amounts[index] ?? 0) });
-};
-
-const recordSplit = (
-  target: Map<string, Array<Record<string, number>>>,
-  key: string,
-  owner: string,
-  amounts: number[],
-  length: number,
-  minimum: number,
-): void => {
-  const existing = target.get(key) ?? Array.from({ length }, () => ({}) as Record<string, number>);
-
-  amounts.forEach((amount, index) => {
-    if (amount < minimum) return;
-    existing[index] = { ...existing[index], [owner]: (existing[index][owner] ?? 0) + amount };
-  });
-
-  target.set(key, existing);
-};
-
-// The key a replayed holding is recorded under.
+// Prices for keys no drifted snapshot already carries.
 //
-// The replay works in price keys and a snapshot is written in identity keys, and the two disagree for
-// exactly the assets CoinGecko lists: `coingecko:ethereum` and `1:0xa0b8...` both become `coin:...`.
-// Canonicalising here, at the write boundary rather than inside the replay, is what keeps the pricing
-// helpers working on the key shape they were written for.
-const canonicalKeyFor = (priceKey: string, tokensById: Map<string, StoredToken>): string => {
-  if (priceKey.startsWith('coingecko:')) return `coin:${priceKey.slice('coingecko:'.length)}`;
-
-  const token = tokensById.get(priceKey);
-  if (token?.coingeckoId) return `coin:${token.coingeckoId}`;
-
-  return priceKey;
-};
-
-// A price for every canonical key at every moment, taken from the snapshots themselves wherever they have
-// one and asked about only where they do not.
-//
-// Carry-over is the primary source rather than a fallback, and it is both cheaper and more accurate. A
-// recorded price is a spot price captured at that moment; the historical replacement is one bucketed point
-// per UTC day carried forward, and for a token only quoted on a DEX there is no series at all. Fetching is
-// left for genuinely new assets, which is nothing at all for a pure removal.
-const resolvePrices = async (
-  replays: Array<OwnerReplay | undefined>,
+// Snapshot prices live in the same key space the replay produces, so carry-over is a straight lookup: a
+// price the point recorded at the time beats a daily historical bucket, and fetching is reserved for
+// assets no point has ever priced. For a pure removal the residual list is empty and nothing is fetched.
+const resolveResidualPrices = async (
+  replays: Array<OwnerRowReplay | undefined>,
   plans: SnapshotPlan[],
-  tokensById: Map<string, StoredToken>,
   onProgress?: (progress: WalletScopeProgress) => void,
 ): Promise<Map<string, HistoricalPriceSeries>> => {
-  const recordedKeys = new Set(plans.flatMap((plan) => plan.snapshot.positions.map((position) => position.priceKey)));
-
-  const residualKeys = deduplicateArray(
-    replays
-      .filter((replay): replay is OwnerReplay => replay !== undefined)
-      .flatMap((replay) => [...replay.balanceSeries.keys()])
-      .map((priceKey) => canonicalKeyFor(priceKey, tokensById))
-      .filter((key) => !recordedKeys.has(key)),
+  const recordedKeys = new Set(
+    plans.flatMap((plan) =>
+      (plan.snapshot.prices ?? []).filter((price) => price.priceUsd !== null).map((price) => price.id),
+    ),
   );
 
+  const residualKeys = new Set<string>();
+  for (const replay of replays) {
+    if (!replay) continue;
+    for (const token of replay.tokenMetadata.values()) {
+      const contractKey = token.id;
+      const coinKey = token.coingeckoId ? `coingecko:${token.coingeckoId}` : undefined;
+      if (!recordedKeys.has(contractKey) && !(coinKey && recordedKeys.has(coinKey))) {
+        residualKeys.add(coinKey ?? contractKey);
+      }
+    }
+  }
+
   const seriesByKey = new Map<string, HistoricalPriceSeries>();
-  if (residualKeys.length === 0) return seriesByKey;
+  if (residualKeys.size === 0) return seriesByKey;
 
   const timestamps = plans.map((plan) => plan.snapshot.timestamp);
-  const window: HistoryWindow = {
-    from: Math.min(...timestamps),
-    to: Math.max(...timestamps),
-    truncated: false,
-  };
+  const window: HistoryWindow = { from: Math.min(...timestamps), to: Math.max(...timestamps), truncated: false };
 
+  const keys = [...residualKeys];
   let completed = 0;
-  onProgress?.({ phase: 'fetching-prices', completed, total: residualKeys.length });
+  onProgress?.({ phase: 'fetching-prices', completed, total: keys.length });
 
-  await mapAsyncBounded(residualKeys, PRICE_FETCH_CONCURRENCY, async (key) => {
-    const series = await fetchSeriesForCanonicalKey(key, window, tokensById).catch(() => undefined);
+  await mapAsyncBounded(keys, PRICE_FETCH_CONCURRENCY, async (key) => {
+    const series = await fetchSeriesForPriceKey(key, window).catch(() => undefined);
     if (series) seriesByKey.set(key, series);
 
     completed += 1;
-    onProgress?.({ phase: 'fetching-prices', completed, total: residualKeys.length });
+    onProgress?.({ phase: 'fetching-prices', completed, total: keys.length });
   });
 
   return seriesByKey;
 };
 
-const fetchSeriesForCanonicalKey = async (
+const fetchSeriesForPriceKey = async (
   key: string,
   window: HistoryWindow,
-  tokensById: Map<string, StoredToken>,
 ): Promise<HistoricalPriceSeries | undefined> => {
-  if (key.startsWith('coin:')) {
-    return fetchHistoricalSeriesForCoin(key.slice('coin:'.length), key, window);
+  if (key.startsWith('coingecko:')) {
+    return fetchHistoricalSeriesForCoin(key.slice('coingecko:'.length), key, window);
   }
 
-  // Anything else is a contract the coin list has never carried, so it can only be asked about by address.
-  const token = tokensById.get(key);
-  if (!token) return undefined;
-
-  return fetchHistoricalSeriesForContract(token.chainId, token.address, key, window);
+  const [chainIdPart, address] = key.split(':');
+  return fetchHistoricalSeriesForContract(Number(chainIdPart), address, key, window);
 };
 
-// Assembles one snapshot's new positions. Returns undefined when the result would be an empty point.
-const buildPositions = (
+interface CorrectedSnapshot {
+  snapshot: StoredSnapshot;
+  unpricedCount: number;
+}
+
+// Applies one plan to one snapshot's rows. Returns undefined when the correction would empty a point that
+// recorded something: a point that measured something must never become a point that measured nothing.
+const buildCorrectedSnapshot = (
   plan: SnapshotPlan,
-  replay: OwnerReplay | undefined,
-  timestampIndex: number,
-  tokensById: Map<string, StoredToken>,
+  replay: OwnerRowReplay | undefined,
+  momentIndex: number,
   historicalPrices: Map<string, HistoricalPriceSeries>,
-  dustThresholdAmount: number,
-): { positions: SnapshotPosition[]; attributedOwners: string[] } | undefined => {
-  const recordedOnChain = plan.snapshot.positions.filter(
-    (position) => position.kind === 'token' || position.kind === 'nft',
-  );
-  const kept = plan.snapshot.positions.filter((position) => position.kind === 'exchange' || position.kind === 'manual');
+  current: SnapshotScope,
+): CorrectedSnapshot | undefined => {
+  const { snapshot } = plan;
+  const removedSet = new Set(plan.method === 'rebuild' ? [] : plan.removableNow);
+  const hadOnChain = (snapshot.balances?.length ?? 0) + (snapshot.nftHoldings?.length ?? 0) > 0;
 
-  const attributedOwners = normaliseOwners([
-    ...(plan.snapshot.attributedOwners ?? []).filter((owner) => !plan.removed.includes(owner)),
-    ...plan.added,
-  ]);
-
-  if (plan.method === 'subtract') {
-    const positions = subtractOwners(recordedOnChain, plan.removableNow, dustThresholdAmount);
-    if (recordedOnChain.length > 0 && positions.length === 0) return undefined;
-
-    return { positions: [...positions, ...kept], attributedOwners };
+  // What survives of the recorded rows: a rebuild keeps none, a fold-in strips the added owners' previous
+  // rows so a second run converges instead of doubling, and a subtract strips the removed owners'.
+  const strippedOwners = new Set(plan.method === 'rebuild' ? [] : [...removedSet, ...plan.added]);
+  let balances = (snapshot.balances ?? []).filter((balance) => !strippedOwners.has(balance.owner));
+  let nftHoldings = (snapshot.nftHoldings ?? []).filter((holding) => !strippedOwners.has(holding.owner));
+  if (plan.method === 'rebuild') {
+    balances = [];
+    nftHoldings = [];
   }
 
-  if (!replay || timestampIndex < 0) return undefined;
+  const tokens = new Map((plan.method === 'rebuild' ? [] : (snapshot.tokens ?? [])).map((token) => [token.id, token]));
+  const prices = new Map((snapshot.prices ?? []).map((price) => [price.id, price.priceUsd]));
+  const collections = new Map(
+    (plan.method === 'rebuild' ? [] : (snapshot.nftCollections ?? [])).map((collection) => [collection.id, collection]),
+  );
 
-  // Everything the replayed wallets held at this moment, in the snapshot's own key space.
-  const replayed = new Map<
-    string,
-    { symbol: string; amount: number; owners: Record<string, number>; kind: 'token' | 'nft' }
-  >();
+  let unpricedCount = 0;
 
-  for (const [priceKey, series] of replay.balanceSeries) {
-    const amount = series.amounts[timestampIndex] ?? 0;
-    if (amount < dustThresholdAmount) continue;
+  if (plan.method !== 'subtract') {
+    if (!replay || momentIndex < 0) return undefined;
 
-    const key = canonicalKeyFor(priceKey, tokensById);
-    const owners = replay.amountByOwnerByKey.get(priceKey)?.[timestampIndex] ?? {};
-    const existing = replayed.get(key);
+    balances = [...balances, ...replay.balancesByMoment[momentIndex]];
+    nftHoldings = [...nftHoldings, ...replay.nftHoldingsByMoment[momentIndex]];
 
-    // Several contracts can collapse onto one identity, which is exactly how a recorded snapshot writes one
-    // USDC row spanning five chains.
-    if (existing) {
-      existing.amount += amount;
-      for (const [owner, ownerAmount] of Object.entries(owners)) {
-        existing.owners[owner] = (existing.owners[owner] ?? 0) + ownerAmount;
+    const referencedTokenIds = new Set(balances.map((balance) => `${balance.chainId}:${balance.token}`));
+    for (const token of replay.tokenMetadata.values()) {
+      if (referencedTokenIds.has(token.id)) tokens.set(token.id, token);
+    }
+
+    // Prices: the point's own recorded figure wins; the fetched series fills only genuine gaps.
+    for (const token of tokens.values()) {
+      const contractKey = token.id;
+      const coinKey = token.coingeckoId ? `coingecko:${token.coingeckoId}` : undefined;
+      if (typeof prices.get(contractKey) === 'number' || (coinKey && typeof prices.get(coinKey) === 'number')) {
+        continue;
       }
-    } else {
-      replayed.set(key, { symbol: series.symbol, amount, owners: { ...owners }, kind: 'token' });
+
+      const series = historicalPrices.get(coinKey ?? contractKey);
+      const priceUsd = series ? priceAt(series, snapshot.timestamp) : null;
+      prices.set(coinKey ?? contractKey, priceUsd);
+      if (priceUsd === null) unpricedCount += 1;
+    }
+
+    for (const holding of nftHoldings) {
+      const id = `${holding.chainId}:${holding.collection}`;
+      if (!collections.has(id)) {
+        collections.set(id, {
+          id,
+          chainId: holding.chainId,
+          address: holding.collection,
+          name: replay.collectionNames.get(id),
+          // A collection this point never valued has no floor of that moment; today's floor would be an
+          // anachronism dressed as a fact, so it stays unvalued and is counted in the summary.
+          floorPriceUsd: null,
+        });
+      }
     }
   }
 
-  for (const [collectionKey, series] of replay.nftSeries) {
-    const count = series.counts[timestampIndex] ?? 0;
-    if (count === 0) continue;
+  if (hadOnChain && balances.length === 0 && nftHoldings.length === 0) return undefined;
 
-    replayed.set(collectionKey, {
-      symbol: series.name,
-      amount: count,
-      owners: replay.nftCountByOwnerByKey.get(collectionKey)?.[timestampIndex] ?? {},
-      kind: 'nft',
-    });
-  }
+  // Prune what nothing references any more, so a subtracted point does not carry metadata for holdings it
+  // no longer contains.
+  const referencedTokenIds = new Set(balances.map((balance) => `${balance.chainId}:${balance.token}`));
+  const referencedCollectionIds = new Set(nftHoldings.map((holding) => `${holding.chainId}:${holding.collection}`));
 
-  const base =
-    plan.method === 'rebuild'
-      ? []
-      : // Folding in strips the added wallets' previous contribution first, so a second run converges on the
-        // same answer rather than counting them twice.
-        subtractOwners(recordedOnChain, plan.added, dustThresholdAmount);
+  const attributedOwners = normaliseOwners([
+    ...(plan.method === 'rebuild'
+      ? current.wallets
+      : (snapshot.attributedOwners ?? []).filter((owner) => !removedSet.has(owner))),
+    ...plan.added,
+  ]);
 
-  const positions = new Map(base.map((position) => [`${position.kind}:${position.priceKey}`, { ...position }]));
-
-  for (const [key, holding] of replayed) {
-    const positionKey = `${holding.kind}:${key}`;
-    const existing = positions.get(positionKey);
-
-    const priceUsd =
-      existing?.priceUsd ??
-      recordedPriceFor(plan.snapshot, key, holding.kind) ??
-      priceAt(historicalPrices.get(key) ?? { priceKey: key, points: [] }, plan.snapshot.timestamp);
-
-    const amount = (existing?.amount ?? 0) + holding.amount;
-
-    positions.set(positionKey, {
-      priceKey: key,
-      symbol: existing?.symbol ?? holding.symbol,
-      amount,
-      priceUsd,
-      valueUsd: priceUsd === null ? 0 : amount * priceUsd,
-      kind: holding.kind,
-      amountByOwner: { ...(existing?.amountByOwner ?? {}), ...holding.owners },
-    });
-  }
-
-  const rebuilt = [...positions.values()].filter((position) => position.amount >= dustThresholdAmount);
-  if (recordedOnChain.length > 0 && rebuilt.length === 0) return undefined;
-
-  return { positions: [...rebuilt, ...kept], attributedOwners };
+  return {
+    snapshot: {
+      ...snapshot,
+      balances,
+      nftHoldings,
+      tokens: [...tokens.values()].filter((token) => referencedTokenIds.has(token.id)),
+      nftCollections: [...collections.values()].filter((collection) => referencedCollectionIds.has(collection.id)),
+      prices: [...prices.entries()].map(([id, priceUsd]) => ({ id, priceUsd })),
+      scope: current,
+      attributedOwners,
+    },
+    unpricedCount,
+  };
 };
-
-// The price this snapshot already recorded for an asset, which is a spot price captured at that moment and
-// therefore better than anything a daily historical series can offer.
-const recordedPriceFor = (snapshot: StoredSnapshot, key: string, kind: 'token' | 'nft'): number | null | undefined =>
-  snapshot.positions.find((position) => position.kind === kind && position.priceKey === key)?.priceUsd;
 
 // Written only where the row is still the one that was read.
 //
-// A run takes minutes, and in that time the History page's delete button is live, a sync can end with a new
-// snapshot, and the manual reprocess can rewrite the same rows. Checking existence stops a deleted point
-// being resurrected; checking `createdAt` stops another writer's version being overwritten by one computed
-// from positions that are now stale.
+// A run takes minutes, and in that time the History page's delete button is live, a sync can end with a
+// new snapshot, and the manual reprocess can rewrite the same rows. Checking existence stops a deleted
+// point being resurrected; checking `createdAt` stops another writer's version being overwritten by one
+// computed from rows that are now stale.
 const writeIfUnchanged = async (updated: StoredSnapshot[], plans: SnapshotPlan[]): Promise<void> => {
   if (updated.length === 0) return;
 
@@ -621,18 +594,19 @@ const writeIfUnchanged = async (updated: StoredSnapshot[], plans: SnapshotPlan[]
     const existing = await db.snapshots.bulkGet(updated.map((snapshot) => snapshot.timestamp));
 
     const safe = updated.filter((snapshot, index) => {
-      const current = existing[index];
-      return current !== undefined && current.createdAt === baselineCreatedAt.get(snapshot.timestamp);
+      const currentRow = existing[index];
+      return currentRow !== undefined && currentRow.createdAt === baselineCreatedAt.get(snapshot.timestamp);
     });
 
     if (safe.length > 0) await db.snapshots.bulkPut(safe);
   });
 };
 
-const getCollectionNames = async (): Promise<Map<string, string>> => {
-  const collections = await db.nftCollections.toArray();
-
-  return new Map(
-    collections.map((collection) => [collection.id, collection.name ?? collection.symbol ?? collection.address]),
-  );
+// A replayed float amount converted back to raw units. String arithmetic rather than
+// BigInt(amount * 10 ** decimals), which overflows the float long before it overflows the token.
+const floatToRawUnits = (amount: number, decimals: number): string => {
+  const fractionDigits = Math.min(decimals, 20);
+  const [whole, fraction = ''] = Math.max(0, amount).toFixed(fractionDigits).split('.');
+  const raw = `${whole}${fraction.padEnd(decimals, '0')}`.replace(/^0+(?=\d)/, '');
+  return raw === '' ? '0' : raw;
 };

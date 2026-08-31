@@ -1,8 +1,9 @@
 import { db } from 'lib/db';
 import { coingeckoPriceKey } from 'lib/db/keys';
-import type { SnapshotPosition, StoredManualBalance, StoredSnapshot } from 'lib/db/schema';
+import type { StoredSnapshot } from 'lib/db/schema';
 import { loadSettings } from 'lib/db/settings';
 import { amountAt, groupEntriesByBalance } from 'lib/manual/balances';
+import { computeSnapshotTotalUsd } from 'lib/portfolio/snapshot-lens';
 import {
   fetchHistoricalSeriesForCoin,
   type HistoricalPriceSeries,
@@ -23,7 +24,7 @@ export interface ManualReprocessResult {
   snapshotsChanged: number;
   // Manual holdings written across every snapshot, which is a count of facts recorded rather than of assets.
   positionsWritten: number;
-  // Holdings that were held at a snapshot but had no historical price there, and so contributed nothing.
+  // Holdings that were held at a snapshot but had no price there, and so contributed nothing.
   unpricedPositionCount: number;
   // Set when snapshots reach further back than the configured CoinGecko plan will price.
   earliestPricedTimestamp?: number;
@@ -41,10 +42,9 @@ const PRICE_FETCH_CONCURRENCY = 3;
 //
 //   - It never creates a snapshot. Which moments are worth recording is the user's decision, and inventing
 //     points here would put figures on the chart they never asked for.
-//   - It never touches a non-manual position. A point recorded at sync time holds balances read from the
-//     chain, which is more accurate than anything a reconstruction could produce; rebuilding those would
-//     trade a fact for an estimate. Only the `manual` positions are replaced, so running this repeatedly
-//     converges rather than accumulating.
+//   - It never touches anything but the manual rows and their coins' prices. Balances read from the chain
+//     at the time are facts a replay could only degrade. A price a snapshot already has is kept for the
+//     same reason: it was captured at the moment, and the historical series is one point per day.
 export const reprocessManualBalances = async (
   onProgress?: (progress: ManualReprocessProgress) => void,
 ): Promise<ManualReprocessResult> => {
@@ -75,54 +75,58 @@ export const reprocessManualBalances = async (
 
   const updated: StoredSnapshot[] = [];
 
-  snapshots.forEach((snapshot, index) => {
-    const manualPositions: SnapshotPosition[] = [];
+  for (const [index, snapshot] of snapshots.entries()) {
+    const manualHoldings: StoredSnapshot['manualHoldings'] = [];
+    const prices = new Map((snapshot.prices ?? []).map((price) => [price.id, price.priceUsd]));
 
     for (const balance of balances) {
       const amount = amountAt(entriesByBalance.get(balance.id) ?? [], snapshot.timestamp);
       if (amount < spam.dustThresholdAmount) continue;
 
-      // The price this point already recorded wins over a replayed one.
-      //
-      // Same trade this module refuses to make with the on-chain figures, for the same reason: a recorded
-      // price is a spot price captured at that moment, while the historical series is one bucketed point
-      // per UTC day carried forward. A point taken after the balance was added already knows the answer,
-      // and re-pricing it would swap a fact for an approximation.
-      const series = balance.coingeckoId ? seriesByCoinId.get(balance.coingeckoId) : undefined;
-      const priceUsd = recordedPriceFor(snapshot, balance) ?? (series ? priceAt(series, snapshot.timestamp) : null);
-
-      if (priceUsd === null) unpricedPositionCount += 1;
-
-      manualPositions.push({
-        priceKey: `manual:${balance.id}`,
+      manualHoldings.push({
+        balanceId: balance.id,
         symbol: balance.symbol,
+        coingeckoId: balance.coingeckoId,
+        location: balance.location,
+        wallet: balance.wallet,
         amount,
-        priceUsd,
-        valueUsd: priceUsd === null ? 0 : amount * priceUsd,
-        kind: 'manual',
       });
+
+      if (!balance.coingeckoId) continue;
+
+      // The price this snapshot already recorded wins; the historical series only fills gaps, for points
+      // that never priced this coin. A previously stored null is asked about again: it was a question
+      // without an answer, not an answer.
+      const priceId = coingeckoPriceKey(balance.coingeckoId);
+      const recorded = prices.get(priceId);
+      if (typeof recorded === 'number') continue;
+
+      const series = seriesByCoinId.get(balance.coingeckoId);
+      const priceUsd = series ? priceAt(series, snapshot.timestamp) : null;
+      prices.set(priceId, priceUsd);
+      if (priceUsd === null) unpricedPositionCount += 1;
     }
 
-    const others = snapshot.positions.filter((position) => position.kind !== 'manual');
-    const positions = [...others, ...manualPositions];
+    const candidate: StoredSnapshot = {
+      ...snapshot,
+      manualHoldings,
+      prices: [...prices.entries()].map(([id, priceUsd]) => ({ id, priceUsd })),
+    };
 
-    // Written back only when it actually differs, so a run that changes nothing leaves every row alone
-    // rather than churning the database and the live queries watching it.
-    if (isUnchanged(snapshot.positions, positions)) return;
+    // Written back only when something actually differs, so a run that changes nothing leaves every row
+    // alone rather than churning the database and the live queries watching it.
+    if (isUnchanged(snapshot, candidate)) continue;
+
+    candidate.totalUsd = await computeSnapshotTotalUsd(candidate);
 
     snapshotsChanged += 1;
-    positionsWritten += manualPositions.length;
-
-    updated.push({
-      ...snapshot,
-      totalUsd: positions.reduce((total, position) => total + position.valueUsd, 0),
-      positions,
-    });
+    positionsWritten += manualHoldings.length;
+    updated.push(candidate);
 
     onProgress?.({ phase: 'updating-snapshots', completed: index + 1, total: snapshots.length });
-  });
+  }
 
-  if (updated.length > 0) await db.snapshots.bulkPut(updated);
+  if (updated.length > 0) await writeIfUnchanged(updated, snapshots);
 
   return {
     status: 'updated',
@@ -133,24 +137,6 @@ export const reprocessManualBalances = async (
     earliestPricedTimestamp:
       earliestPriced !== null && snapshots[0].timestamp < earliestPriced ? earliestPriced : undefined,
   };
-};
-
-// What this snapshot recorded for a hand-entered holding, if it was holding it at the time.
-//
-// Checked under both keys the app writes manual positions with: the snapshot writer files one under the
-// asset's identity, since a hand-entered holding merges into the row for the same coin held anywhere else,
-// while this module writes one per balance. Only a real number counts, so a position previously written
-// with no price is asked about again rather than being left unpriced forever.
-const recordedPriceFor = (snapshot: StoredSnapshot, balance: StoredManualBalance): number | undefined => {
-  const keys = [balance.coingeckoId ? `coin:${balance.coingeckoId}` : undefined, `manual:${balance.id}`].filter(
-    (key): key is string => key !== undefined,
-  );
-
-  const recorded = snapshot.positions.find(
-    (position) => position.kind === 'manual' && keys.includes(position.priceKey),
-  );
-
-  return typeof recorded?.priceUsd === 'number' ? recorded.priceUsd : undefined;
 };
 
 // One price series per coin, covering every snapshot at once.
@@ -195,12 +181,38 @@ const fetchSeriesForBalances = async (
   return seriesByCoinId;
 };
 
-const isUnchanged = (before: SnapshotPosition[], after: SnapshotPosition[]): boolean => {
-  if (before.length !== after.length) return false;
+const isUnchanged = (before: StoredSnapshot, after: StoredSnapshot): boolean => {
+  const holdingKey = (holding: StoredSnapshot['manualHoldings'][number]) =>
+    `${holding.balanceId}:${holding.amount}:${holding.coingeckoId ?? ''}:${holding.location}:${holding.wallet ?? ''}`;
+  const priceKey = (price: StoredSnapshot['prices'][number]) => `${price.id}:${price.priceUsd}`;
 
-  const key = (position: SnapshotPosition) =>
-    `${position.kind}:${position.priceKey}:${position.amount}:${position.valueUsd}`;
-  const beforeKeys = new Set(before.map(key));
+  const beforeHoldings = new Set((before.manualHoldings ?? []).map(holdingKey));
+  const afterHoldings = (after.manualHoldings ?? []).map(holdingKey);
+  const beforePrices = new Set((before.prices ?? []).map(priceKey));
+  const afterPrices = (after.prices ?? []).map(priceKey);
 
-  return after.every((position) => beforeKeys.has(key(position)));
+  return (
+    beforeHoldings.size === afterHoldings.length &&
+    afterHoldings.every((key) => beforeHoldings.has(key)) &&
+    beforePrices.size === afterPrices.length &&
+    afterPrices.every((key) => beforePrices.has(key))
+  );
+};
+
+// Written only where the row is still the one that was read: a sync can end mid-run, and the History
+// page's delete button is live throughout. Existence stops a deleted point being resurrected; createdAt
+// stops another writer's version being overwritten from stale rows.
+const writeIfUnchanged = async (updated: StoredSnapshot[], readSnapshots: StoredSnapshot[]): Promise<void> => {
+  const baselineCreatedAt = new Map(readSnapshots.map((snapshot) => [snapshot.timestamp, snapshot.createdAt]));
+
+  await db.transaction('rw', db.snapshots, async () => {
+    const existing = await db.snapshots.bulkGet(updated.map((snapshot) => snapshot.timestamp));
+
+    const safe = updated.filter((snapshot, index) => {
+      const current = existing[index];
+      return current !== undefined && current.createdAt === baselineCreatedAt.get(snapshot.timestamp);
+    });
+
+    if (safe.length > 0) await db.snapshots.bulkPut(safe);
+  });
 };

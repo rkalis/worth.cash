@@ -1,58 +1,158 @@
 import { db } from 'lib/db';
-import type { SnapshotPosition, SnapshotScope, StoredSnapshot } from 'lib/db/schema';
+import type { SnapshotScope, StoredSnapshot } from 'lib/db/schema';
 import { loadSettings } from 'lib/db/settings';
-import { splitNftPositionsByOwner, splitTokenPositionsByOwner } from 'lib/history/attribution';
 import { normaliseOwners } from 'lib/history/scope';
-import { aggregateNftCollections, aggregateTokens, calculateTotals } from 'lib/portfolio/aggregate';
+import { type AggregationInput, calculateTotals } from 'lib/portfolio/aggregate';
+import { assemblePortfolio } from 'lib/portfolio/assemble';
 import { buildAggregationInput, loadPortfolioSource } from 'lib/portfolio/load';
 
-// Records what the portfolio is worth right now.
-//
-// This is the accurate half of the history. Balances have just been read from the chain and prices have
-// just been fetched, so nothing here is reconstructed or inferred: the point it writes is exactly the
-// figure the dashboard is showing at that moment, because both come from the same aggregation.
+// Records what the portfolio is right now: not a rendered summary, but the aggregation's own input,
+// frozen. A pinned snapshot later feeds these rows back through the same aggregation the dashboard runs,
+// which is what makes the historical view exact rather than approximate: same code, older facts.
 //
 // Returns the snapshot it wrote, or undefined when there was nothing to record.
 export const recordCurrentSnapshot = async (timestamp: number = Date.now()): Promise<StoredSnapshot | undefined> => {
   const source = await loadPortfolioSource();
   const input = buildAggregationInput(source);
 
-  const tokens = aggregateTokens(input).filter((token) => !token.isHidden);
-  const nftCollections = aggregateNftCollections(input).filter((collection) => !collection.isHidden);
-
-  // Which wallet contributed what, split out of the same rows the totals were built from.
-  //
-  // Free to compute here and impossible to recover later: once the amounts are summed, a wallet cannot be
-  // taken back out of the figure. Recording the split is what lets a wallet be removed from this point by
-  // arithmetic rather than by replaying its history from stored events.
-  const tokenSplits = splitTokenPositionsByOwner(tokens, input);
-  const nftSplits = splitNftPositionsByOwner(nftCollections);
-
-  const positions = [...buildTokenPositions(tokens, tokenSplits), ...buildNftPositions(nftCollections, nftSplits)];
+  const facts = buildSnapshotFacts(input);
 
   // An empty portfolio is not a portfolio worth zero. A first sync that failed everywhere looks exactly
   // like this, and recording it would put a false zero on the chart that the user cannot tell from a real
   // one. Nothing to record is nothing to record.
-  if (positions.length === 0) return undefined;
+  const holdsAnything =
+    facts.balances.length > 0 ||
+    facts.nftHoldings.length > 0 ||
+    facts.exchangeBalances.length > 0 ||
+    facts.manualHoldings.length > 0;
+  if (!holdsAnything) return undefined;
 
-  const totals = calculateTotals(tokens, nftCollections);
+  const { tokens, nftCollections } = assemblePortfolio(input);
 
   const snapshot: StoredSnapshot = {
     timestamp,
-    totalUsd: totals.totalUsd,
+    totalUsd: calculateTotals(tokens, nftCollections).totalUsd,
     createdAt: Date.now(),
-    positions,
+    ...facts,
     // Stamped with the set this point was measured over, which the writer knows exactly because it just
     // measured it. Without the stamp a later run has to infer it from when each wallet was added.
     scope: await currentScopeFor(source),
-    // Every wallet that was measured, not only those that turned out to hold something. A wallet holding
-    // nothing appears in no split, and reading that as "not attributed" would have it folded in again on
-    // every future run.
+    // Every wallet that was measured, not only those that held something: the rows carry their owners,
+    // but a wallet holding nothing appears on no row, and forgetting it was measured would have it
+    // re-measured forever.
     attributedOwners: normaliseOwners((source.wallets ?? []).map((wallet) => wallet.address)),
   };
 
   await db.snapshots.put(snapshot);
   return snapshot;
+};
+
+// The facts a snapshot stores, cut from the aggregation input it was measured with.
+//
+// The input is already filtered the way the dashboard filters (enabled chains, enabled accounts, enabled
+// manual balances), so what is frozen is exactly what was measured. Metadata is trimmed to what valuing
+// and labelling need; logos stay live-only, prices are trimmed to the keys the held assets can be priced
+// under, and nothing derived is stored.
+export const buildSnapshotFacts = (
+  input: AggregationInput,
+): Pick<
+  StoredSnapshot,
+  | 'balances'
+  | 'tokens'
+  | 'prices'
+  | 'nftCollections'
+  | 'nftHoldings'
+  | 'exchangeBalances'
+  | 'exchangeAccounts'
+  | 'exchangeAssetCoingeckoIds'
+  | 'manualHoldings'
+  | 'fiatRatesPerUsd'
+> => {
+  const heldTokenIds = new Set(input.balances.map((balance) => `${balance.chainId}:${balance.token}`));
+  const tokens = input.tokens.filter((token) => heldTokenIds.has(token.id));
+
+  // Every key a held asset could be priced under: its own contract, its coin id, an exchange asset's
+  // resolved coin, and a manual holding's coin.
+  const relevantPriceKeys = new Set<string>();
+  for (const token of tokens) {
+    relevantPriceKeys.add(token.id);
+    if (token.coingeckoId) relevantPriceKeys.add(`coingecko:${token.coingeckoId}`);
+  }
+  for (const coingeckoId of Object.values(input.exchangeAssetCoingeckoIds)) {
+    relevantPriceKeys.add(`coingecko:${coingeckoId}`);
+  }
+  for (const holding of input.manualHoldings ?? []) {
+    if (holding.balance.coingeckoId) relevantPriceKeys.add(`coingecko:${holding.balance.coingeckoId}`);
+  }
+
+  const heldCollectionIds = new Set(input.nftItems.map((item) => `${item.chainId}:${item.collection}`));
+
+  // Item rows collapse to one count per (collection, owner): the aggregation needs nothing finer, and a
+  // large wallet would otherwise freeze thousands of token ids per point.
+  const countByHolding = new Map<string, { chainId: number; collection: string; owner: string; count: number }>();
+  for (const item of input.nftItems) {
+    const key = `${item.chainId}:${item.collection}:${item.owner}`;
+    const existing = countByHolding.get(key);
+    const count = Number(item.amount || '1');
+
+    if (existing) {
+      existing.count += count;
+    } else {
+      countByHolding.set(key, { chainId: item.chainId, collection: item.collection, owner: item.owner, count });
+    }
+  }
+
+  return {
+    balances: input.balances.map((balance) => ({
+      chainId: balance.chainId,
+      owner: balance.owner,
+      token: balance.token,
+      amount: balance.amount,
+    })),
+    tokens: tokens.map((token) => ({
+      id: token.id,
+      chainId: token.chainId,
+      address: token.address,
+      symbol: token.symbol,
+      decimals: token.decimals,
+      coingeckoId: token.coingeckoId,
+      isSpam: token.isSpam,
+      spamReason: token.spamReason,
+    })),
+    prices: input.prices
+      .filter((price) => relevantPriceKeys.has(price.id))
+      .map((price) => ({ id: price.id, priceUsd: price.priceUsd })),
+    nftCollections: input.nftCollections
+      .filter((collection) => heldCollectionIds.has(collection.id))
+      .map((collection) => ({
+        id: collection.id,
+        chainId: collection.chainId,
+        address: collection.address,
+        name: collection.name ?? collection.symbol,
+        floorPriceUsd: collection.floorPriceUsd ?? null,
+      })),
+    nftHoldings: [...countByHolding.values()],
+    exchangeBalances: input.exchangeBalances.map((balance) => ({
+      accountId: balance.accountId,
+      asset: balance.asset,
+      amount: balance.amount,
+    })),
+    exchangeAccounts: input.exchangeAccounts.map((account) => ({
+      id: account.id,
+      label: account.label,
+      exchange: account.exchange,
+    })),
+    exchangeAssetCoingeckoIds: input.exchangeAssetCoingeckoIds,
+    manualHoldings: (input.manualHoldings ?? []).map((holding) => ({
+      balanceId: holding.balance.id,
+      symbol: holding.balance.symbol,
+      coingeckoId: holding.balance.coingeckoId,
+      location: holding.balance.location,
+      wallet: holding.balance.wallet,
+      amount: holding.amount,
+    })),
+    fiatRatesPerUsd: input.fiatRatesPerUsd,
+  };
 };
 
 // The scope the writer just measured, built from the source it aggregated rather than from a second read,
@@ -66,78 +166,6 @@ const currentScopeFor = async (source: Awaited<ReturnType<typeof loadPortfolioSo
     includeTestnets: sync.includeTestnets,
   };
 };
-
-// One position per asset per kind of place it is held.
-//
-// A row can now span chains and exchanges at once, and the split is kept rather than flattened so a
-// snapshot still says how much was on-chain and how much sat on an exchange.
-export const buildTokenPositions = (
-  tokens: ReturnType<typeof aggregateTokens>,
-  splitsByKey: Map<string, Record<string, number>> = new Map(),
-): SnapshotPosition[] =>
-  tokens.flatMap((token) => {
-    const positions: SnapshotPosition[] = [];
-
-    const chainAmount = sumLocationAmounts(token, 'chain');
-    const exchangeAmount = sumLocationAmounts(token, 'exchange');
-    const manualAmount = sumLocationAmounts(token, 'manual');
-
-    if (chainAmount > 0) {
-      positions.push({
-        priceKey: token.key,
-        symbol: token.symbol,
-        amount: chainAmount,
-        priceUsd: token.priceUsd,
-        valueUsd: token.chainValueUsd,
-        kind: 'token',
-        amountByOwner: splitsByKey.get(token.key),
-      });
-    }
-
-    if (exchangeAmount > 0) {
-      positions.push({
-        priceKey: token.key,
-        symbol: token.symbol,
-        amount: exchangeAmount,
-        priceUsd: token.priceUsd,
-        valueUsd: token.exchangeValueUsd,
-        kind: 'exchange',
-      });
-    }
-
-    if (manualAmount > 0) {
-      positions.push({
-        priceKey: token.key,
-        symbol: token.symbol,
-        amount: manualAmount,
-        priceUsd: token.priceUsd,
-        valueUsd: token.manualValueUsd,
-        kind: 'manual',
-      });
-    }
-
-    return positions;
-  });
-
-const sumLocationAmounts = (
-  token: ReturnType<typeof aggregateTokens>[number],
-  kind: 'chain' | 'exchange' | 'manual',
-): number =>
-  token.locations.filter((location) => location.kind === kind).reduce((total, location) => total + location.amount, 0);
-
-export const buildNftPositions = (
-  collections: ReturnType<typeof aggregateNftCollections>,
-  splitsByKey: Map<string, Record<string, number>> = new Map(),
-): SnapshotPosition[] =>
-  collections.map((collection) => ({
-    priceKey: collection.key,
-    symbol: collection.name,
-    amount: collection.itemCount,
-    priceUsd: collection.floorPriceUsd,
-    valueUsd: collection.valueUsd ?? 0,
-    kind: 'nft' as const,
-    amountByOwner: splitsByKey.get(collection.key),
-  }));
 
 export const deleteSnapshot = async (timestamp: number): Promise<void> => {
   await db.snapshots.delete(timestamp);

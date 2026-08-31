@@ -1,8 +1,10 @@
 import type { Table } from 'dexie';
 import {
+  type ExportedStores,
   type ExportSlice,
   type ExportSummary,
   SLICE_STORES,
+  STORE_BACKED_SLICES,
   validateExport,
   type WorthExport,
 } from 'lib/backup/format';
@@ -60,7 +62,7 @@ export const applyImport = async (parsed: WorthExport, slices: ExportSlice[]): P
   const rowsWritten: Record<string, number> = {};
   const importedSlices: ExportSlice[] = [];
 
-  const writeStores = async (stores: Record<string, unknown[]> | undefined, allowed: readonly string[]) => {
+  const writeStores = async (stores: ExportedStores | undefined, allowed: readonly string[]) => {
     if (!stores) return;
 
     // Only stores this version knows are written; anything else in the file is ignored, which is what
@@ -79,14 +81,15 @@ export const applyImport = async (parsed: WorthExport, slices: ExportSlice[]): P
     });
   };
 
-  if (slices.includes('data') && parsed.data) {
-    await writeStores(parsed.data, SLICE_STORES.data);
-    importedSlices.push('data');
+  for (const slice of STORE_BACKED_SLICES) {
+    if (!slices.includes(slice) || !parsed[slice]) continue;
+    await writeStores(parsed[slice], SLICE_STORES[slice]);
+    importedSlices.push(slice);
   }
 
   if (slices.includes('settings') && parsed.settings) {
     const { app, ...stores } = parsed.settings;
-    await writeStores(stores as Record<string, unknown[]>, SLICE_STORES.settings);
+    await writeStores(stores as ExportedStores, SLICE_STORES.settings);
 
     // Section-wise onto what is already there, exactly as the settings UI writes: the file's sections win
     // where present, and sections it does not carry keep their current values. apiKeys is never part of
@@ -111,11 +114,6 @@ export const applyImport = async (parsed: WorthExport, slices: ExportSlice[]): P
     );
     await saveSettings({ ...current, apiKeys: merged });
     importedSlices.push('apiKeys');
-  }
-
-  if (slices.includes('exchangeAccounts') && parsed.exchangeAccounts) {
-    await writeStores({ exchangeAccounts: parsed.exchangeAccounts }, SLICE_STORES.exchangeAccounts);
-    importedSlices.push('exchangeAccounts');
   }
 
   return { rowsWritten, importedSlices };

@@ -4,9 +4,7 @@
     {
       "name": "worth.cash",
       "runtimeExecutable": "yarn",
-      "runtimeArgs": [
-        "dev"
-      ],
+      "runtimeArgs": ["dev"],
       "port": 3000,
       "autoPort": true
     }

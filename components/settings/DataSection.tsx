@@ -54,7 +54,8 @@ const DataSection = () => {
         {isConfirming ? (
           <>
             <span className="text-xs text-zinc-600 dark:text-zinc-400">
-              This deletes all synced data and forces a full resync. Your wallets, keys and settings are kept.
+              This deletes all synced data and your recorded history, and forces a full resync. Your wallets, manual
+              records, keys and settings are kept. Export first if you want the history back.
             </span>
             <Button variant="danger" size="sm" onClick={clear} loading={isClearing}>
               Confirm

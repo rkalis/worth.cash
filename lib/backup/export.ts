@@ -1,5 +1,13 @@
 import type { Table } from 'dexie';
-import { EXPORT_FORMAT, EXPORT_VERSION, type ExportSlice, SLICE_STORES, type WorthExport } from 'lib/backup/format';
+import {
+  EXPORT_FORMAT,
+  EXPORT_VERSION,
+  type ExportedStores,
+  type ExportSlice,
+  SLICE_STORES,
+  STORE_BACKED_SLICES,
+  type WorthExport,
+} from 'lib/backup/format';
 import { db } from 'lib/db';
 import { loadSettings } from 'lib/db/settings';
 
@@ -15,15 +23,17 @@ export const buildExport = async (slices: ExportSlice[]): Promise<WorthExport> =
     exportedAt: Date.now(),
   };
 
-  const readStores = async (stores: readonly string[]): Promise<Record<string, unknown[]>> => {
+  const readStores = async (stores: readonly string[]): Promise<ExportedStores> => {
     const tables = await Promise.all(
       stores.map(async (store) => [store, await (db[store as keyof typeof db] as Table).toArray()] as const),
     );
     return Object.fromEntries(tables);
   };
 
-  if (slices.includes('data')) {
-    result.data = await readStores(SLICE_STORES.data);
+  for (const slice of STORE_BACKED_SLICES) {
+    if (slices.includes(slice)) {
+      result[slice] = await readStores(SLICE_STORES[slice]);
+    }
   }
 
   if (slices.includes('settings') || slices.includes('apiKeys')) {
@@ -36,10 +46,6 @@ export const buildExport = async (slices: ExportSlice[]): Promise<WorthExport> =
     if (slices.includes('apiKeys')) {
       result.apiKeys = apiKeys;
     }
-  }
-
-  if (slices.includes('exchangeAccounts')) {
-    result.exchangeAccounts = await db.exchangeAccounts.toArray();
   }
 
   return result;

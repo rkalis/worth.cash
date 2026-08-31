@@ -41,7 +41,7 @@ For **exchange accounts**, use read-only keys. Coinbase expects a CDP key (an EC
 - **NFTs by collection**, with artwork and floor prices from CoinGecko, which indexes only about two thousand collections; long-tail collections have no floor and are counted at nothing.
 - **A value chart you control.** A snapshot is written on every sync; one can be added for any past moment (reconstructed from the locally stored transfer logs), backfilled weekly going back to a date you pick, or deleted. Clicking a point on the chart pins that snapshot, and the portfolio and graphs show that moment through today's settings.
 - **Spam filtering** in four layers: minimum quantity, no price, a dust threshold in dollars (regardless of the display currency), and name heuristics. Nothing is deleted; filtered positions stay one click away.
-- **Export and import.** All local data as one compressed file, selectable by slice: raw data, settings, API keys, exchange accounts.
+- **Export and import.** All local data as one compressed file, selectable by slice: wallets and manual records, history snapshots, synced data, settings, API keys, exchange accounts. Synced data is nearly the whole size of a file and is off by default, since a resync rebuilds it; the rest cannot be fetched again.
 - **USD or EUR display.** Prices are fetched and stored in dollars and converted only at display time, using ECB reference rates.
 
 ## How balances are discovered

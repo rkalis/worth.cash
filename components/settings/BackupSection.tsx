@@ -14,18 +14,33 @@ interface SliceOption {
   slice: ExportSlice;
   label: string;
   tooltip: string;
-  // Credentials are off by default: the common reasons to export, backups and moving machines you trust,
-  // can opt in, and a file made to share with someone must not carry secrets by accident.
+  // On by default: everything the app cannot fetch again. Synced data is off because it is the bulk of the
+  // file and costs only a resync, and credentials are off so a file made to share carries no secrets by
+  // accident.
   defaultChecked: boolean;
 }
 
 const SLICE_OPTIONS: SliceOption[] = [
   {
-    slice: 'data',
-    label: 'Portfolio data',
+    slice: 'records',
+    label: 'Wallets and manual records',
     tooltip:
-      'Tracked wallets, synced events, balances, tokens, NFTs, prices, snapshots, and manual balances with their ledgers. Everything needed to render the portfolio without a resync.',
+      'The wallets you track and the manual balances and ledger entries you typed. Nothing can recreate these, and they are a handful of rows.',
     defaultChecked: true,
+  },
+  {
+    slice: 'snapshots',
+    label: 'History snapshots',
+    tooltip:
+      'The recorded points behind the value chart. Past points can be reconstructed approximately, but one recorded at sync time is exact, so keep these.',
+    defaultChecked: true,
+  },
+  {
+    slice: 'synced',
+    label: 'Synced data',
+    tooltip:
+      'Transfer logs, balances, token and NFT metadata, prices and exchange balances. This is nearly the whole size of a file. Leaving it out costs one resync and no information.',
+    defaultChecked: false,
   },
   {
     slice: 'settings',

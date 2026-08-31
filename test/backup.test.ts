@@ -63,6 +63,18 @@ const seed = (store: string, primaryKey: string, rows: Record<string, unknown>[]
   tables.set(store, new Map(rows.map((row) => [row[primaryKey], row])));
 };
 
+// A database holding one of everything the slices divide up.
+const seedEverything = () => {
+  seed('wallets', 'address', [{ address: '0xaaa', enabled: 1, addedAt: 1 }]);
+  seed('manualBalances', 'id', [{ id: 'm1', symbol: 'BTC', location: 'Bitcoin', enabled: 1, createdAt: 0 }]);
+  seed('manualLedger', 'id', [{ id: 'e1', balanceId: 'm1', kind: 'buy', amount: '0.5', timestamp: 1 }]);
+  seed('snapshots', 'timestamp', [{ timestamp: 100, totalUsd: 5, createdAt: 1, balances: [] }]);
+  seed('transferEvents', 'id', [{ id: 't1', chainId: 1, owner: '0xaaa', token: '0xbbb', blockNumber: 1 }]);
+  seed('balances', 'id', [{ id: 'b1', chainId: 1, owner: '0xaaa', token: '0xbbb', amount: '1' }]);
+  seed('assetCategories', 'id', [{ id: 'c1', name: 'Blue Chip', sortIndex: 0, createdAt: 0 }]);
+  seed('exchangeAccounts', 'id', [{ id: 'acct', exchange: 'kraken', label: 'K', enabled: 1 }]);
+};
+
 beforeEach(() => {
   tables.clear();
   storedSettings = {
@@ -93,12 +105,25 @@ describe('the export envelope', () => {
     expect((result as { error: string }).error).toContain('newer version');
   });
 
-  it('refuses a row that would be unaddressable once written', () => {
+  // Version 1 named its slices differently, so importing one would land part of it and silently drop the
+  // rest. Refusing says so instead.
+  it('refuses a file from the older format rather than importing part of it', () => {
     const result = validateExport({
       format: EXPORT_FORMAT,
       version: 1,
       exportedAt: 0,
-      data: { wallets: [{ label: 'no address field' }] },
+      data: { wallets: [{ address: '0xa' }] },
+    });
+    expect(result).toHaveProperty('error');
+    expect((result as { error: string }).error).toContain('older file format');
+  });
+
+  it('refuses a row that would be unaddressable once written', () => {
+    const result = validateExport({
+      format: EXPORT_FORMAT,
+      version: EXPORT_VERSION,
+      exportedAt: 0,
+      records: { wallets: [{ label: 'no address field' }] },
     });
     expect((result as { error: string }).error).toContain('wallets');
   });
@@ -106,26 +131,24 @@ describe('the export envelope', () => {
   it('reports which slices a file carries and how many rows', () => {
     const result = validateExport({
       format: EXPORT_FORMAT,
-      version: 1,
+      version: EXPORT_VERSION,
       exportedAt: 5,
-      data: { wallets: [{ address: '0xa' }], snapshots: [{ timestamp: 1 }, { timestamp: 2 }] },
+      records: { wallets: [{ address: '0xa' }] },
+      snapshots: { snapshots: [{ timestamp: 1 }, { timestamp: 2 }] },
       apiKeys: { coingecko: 'x' },
     });
 
     expect(result).toMatchObject({
-      summary: { slices: ['data', 'apiKeys'], storeCounts: { wallets: 1, snapshots: 2 } },
+      summary: { slices: ['records', 'snapshots', 'apiKeys'], storeCounts: { wallets: 1, snapshots: 2 } },
     });
   });
 });
 
 describe('export and import round trip', () => {
   it('carries every selected slice through the gzipped file and back', async () => {
-    seed('wallets', 'address', [{ address: '0xaaa', enabled: 1, addedAt: 1 }]);
-    seed('snapshots', 'timestamp', [{ timestamp: 100, totalUsd: 5, createdAt: 1, positions: [] }]);
-    seed('assetCategories', 'id', [{ id: 'c1', name: 'Blue Chip', sortIndex: 0, createdAt: 0 }]);
-    seed('exchangeAccounts', 'id', [{ id: 'acct', exchange: 'kraken', label: 'K', enabled: 1 }]);
+    seedEverything();
 
-    const exported = await buildExport(['data', 'settings', 'apiKeys', 'exchangeAccounts']);
+    const exported = await buildExport(['records', 'snapshots', 'synced', 'settings', 'apiKeys', 'exchangeAccounts']);
     const { blob, filename } = await serializeExport(exported);
     expect(filename.endsWith('.json.gz')).toBe(true);
 
@@ -140,7 +163,15 @@ describe('export and import round trip', () => {
 
     const result = await applyImport(parsed.export, parsed.summary.slices);
 
-    expect(result.rowsWritten).toMatchObject({ wallets: 1, snapshots: 1, assetCategories: 1, exchangeAccounts: 1 });
+    expect(result.rowsWritten).toMatchObject({
+      wallets: 1,
+      manualBalances: 1,
+      manualLedger: 1,
+      snapshots: 1,
+      transferEvents: 1,
+      assetCategories: 1,
+      exchangeAccounts: 1,
+    });
     expect(tables.get('wallets')?.get('0xaaa')).toMatchObject({ address: '0xaaa' });
     expect(tables.get('snapshots')?.get(100)).toMatchObject({ totalUsd: 5 });
     expect(storedSettings).toMatchObject({
@@ -149,9 +180,46 @@ describe('export and import round trip', () => {
     });
   });
 
+  // The reason the slices are cut this way: the default file holds what cannot be fetched again, and the
+  // transfer log, which is nearly all of the bytes, is not in it.
+  it('leaves the synced tables out of a file that did not ask for them', async () => {
+    seedEverything();
+
+    const exported = await buildExport(['records', 'snapshots', 'settings']);
+
+    expect(exported.synced).toBeUndefined();
+    expect(JSON.stringify(exported)).not.toContain('transferEvents');
+    expect(exported.records?.wallets).toHaveLength(1);
+    expect(exported.records?.manualLedger).toHaveLength(1);
+    expect(exported.snapshots?.snapshots).toHaveLength(1);
+  });
+
+  it('restores the wallets and manual records without the synced tables', async () => {
+    seedEverything();
+    const exported = await buildExport(['records', 'snapshots']);
+
+    tables.clear();
+    const result = await applyImport(exported, ['records', 'snapshots']);
+
+    expect(result.importedSlices).toEqual(['records', 'snapshots']);
+    expect(result.rowsWritten).toEqual({ wallets: 1, manualBalances: 1, manualLedger: 1, snapshots: 1 });
+    expect(tables.has('transferEvents')).toBe(false);
+  });
+
+  it('imports history on its own, leaving the wallets in the file alone', async () => {
+    seedEverything();
+    const exported = await buildExport(['records', 'snapshots']);
+
+    tables.clear();
+    const result = await applyImport(exported, ['snapshots']);
+
+    expect(result.rowsWritten).toEqual({ snapshots: 1 });
+    expect(tables.has('wallets')).toBe(false);
+  });
+
   it('opens a plain uncompressed file the same way', async () => {
     seed('wallets', 'address', [{ address: '0xbbb', enabled: 1, addedAt: 1 }]);
-    const exported = await buildExport(['data']);
+    const exported = await buildExport(['records']);
 
     const file = new File([JSON.stringify(exported)], 'export.json');
     const parsed = await parseExportFile(file);
@@ -169,12 +237,12 @@ describe('export and import round trip', () => {
 
   it('imports only the slices that were chosen, whatever the file holds', async () => {
     seed('wallets', 'address', [{ address: '0xccc', enabled: 1, addedAt: 1 }]);
-    const exported = await buildExport(['data', 'apiKeys']);
+    const exported = await buildExport(['records', 'apiKeys']);
 
     tables.clear();
     storedSettings = { apiKeys: {} };
 
-    await applyImport(exported, ['data']);
+    await applyImport(exported, ['records']);
 
     expect(tables.get('wallets')?.size).toBe(1);
     expect((storedSettings as { apiKeys: Record<string, string> }).apiKeys).toEqual({});
@@ -198,11 +266,11 @@ describe('export and import round trip', () => {
     await applyImport(
       {
         format: EXPORT_FORMAT,
-        version: 1,
+        version: EXPORT_VERSION,
         exportedAt: 0,
-        data: { wallets: [{ address: '0xnew', enabled: 1, addedAt: 2 }] },
+        records: { wallets: [{ address: '0xnew', enabled: 1, addedAt: 2 }] },
       },
-      ['data'],
+      ['records'],
     );
 
     expect(tables.get('wallets')?.size).toBe(2);
@@ -213,11 +281,11 @@ describe('export and import round trip', () => {
     const result = await applyImport(
       {
         format: EXPORT_FORMAT,
-        version: 1,
+        version: EXPORT_VERSION,
         exportedAt: 0,
-        data: { wallets: [{ address: '0xa', enabled: 1, addedAt: 1 }], futureStore: [{ id: 'x' }] },
+        records: { wallets: [{ address: '0xa', enabled: 1, addedAt: 1 }], futureStore: [{ id: 'x' }] },
       },
-      ['data'],
+      ['records'],
     );
 
     expect(result.rowsWritten).toEqual({ wallets: 1 });

@@ -8,7 +8,6 @@ import ThemeToggle from './ThemeToggle';
 
 const LINKS = [
   { href: '/', label: 'Portfolio' },
-  { href: '/nfts', label: 'NFTs' },
   { href: '/manual', label: 'Manual' },
   { href: '/graphs', label: 'Graphs' },
   { href: '/history', label: 'History' },

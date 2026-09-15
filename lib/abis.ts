@@ -61,13 +61,6 @@ export const ERC721_ABI = [
     inputs: [{ name: 'tokenId', type: 'uint256' }],
     outputs: [{ name: '', type: 'address' }],
   },
-  {
-    type: 'function',
-    name: 'tokenURI',
-    stateMutability: 'view',
-    inputs: [{ name: 'tokenId', type: 'uint256' }],
-    outputs: [{ name: '', type: 'string' }],
-  },
   { type: 'function', name: 'symbol', stateMutability: 'view', inputs: [], outputs: [{ name: '', type: 'string' }] },
   { type: 'function', name: 'name', stateMutability: 'view', inputs: [], outputs: [{ name: '', type: 'string' }] },
   {
@@ -121,13 +114,6 @@ export const ERC1155_ABI = [
       { name: 'ids', type: 'uint256[]' },
     ],
     outputs: [{ name: '', type: 'uint256[]' }],
-  },
-  {
-    type: 'function',
-    name: 'uri',
-    stateMutability: 'view',
-    inputs: [{ name: 'id', type: 'uint256' }],
-    outputs: [{ name: '', type: 'string' }],
   },
   {
     type: 'function',

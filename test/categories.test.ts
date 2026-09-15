@@ -53,7 +53,6 @@ const buildCollection = (key: string, valueUsd: number, categoryId?: string): Ag
   categoryId,
   floorPriceUsd: valueUsd,
   valueUsd,
-  items: [],
   isHidden: false,
 });
 

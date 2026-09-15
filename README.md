@@ -38,7 +38,7 @@ For **exchange accounts**, use read-only keys. Coinbase expects a CDP key (an EC
 - **One row per asset, wherever it sits.** Tokens are aggregated across chains and exchange accounts by CoinGecko coin id: USDC on Base, USDC on Arbitrum and USDC on Kraken are one row, expandable into the locations holding it.
 - **Aggregation by coin id is a security property.** Deploying a token called USDC costs nothing, so grouping by symbol would let an impostor join the real row and be counted at the real price. A coin id comes from CoinGecko's own contract mapping and cannot be claimed; a token CoinGecko has never listed can never merge with anything. An exchange reports only a ticker, so its coin id is a best-effort match against the top coins by market cap rather than a proof, and a merged row always shows which locations it is made of.
 - **Manual balances** for anything the app cannot discover: Bitcoin, Solana, a hardware wallet. You record the buys and sells with their dates, so a past snapshot values what you actually held at that moment.
-- **NFTs by collection**, with artwork and floor prices from CoinGecko, which indexes only about two thousand collections; long-tail collections have no floor and are counted at nothing.
+- **NFTs by collection**, counted and valued at their CoinGecko floor price. CoinGecko indexes only about two thousand collections; long-tail collections have no floor and are counted at nothing.
 - **A value chart you control.** A snapshot is written on every sync; one can be added for any past moment (reconstructed from the locally stored transfer logs), backfilled weekly going back to a date you pick, or deleted. Clicking a point on the chart pins that snapshot, and the portfolio and graphs show that moment through today's settings.
 - **Spam filtering** in four layers: minimum quantity, no price, a dust threshold in dollars (regardless of the display currency), and name heuristics. Nothing is deleted; filtered positions stay one click away.
 - **Export and import.** All local data as one compressed file, selectable by slice: wallets and manual records, history snapshots, synced data, settings, API keys, exchange accounts. Synced data is nearly the whole size of a file and is off by default, since a resync rebuilds it; the rest cannot be fetched again.
@@ -63,7 +63,7 @@ Syncs are incremental, so the first one is the expensive one. Syncing every supp
 
 Single Next.js app.
 
-- `app/` - App Router pages, plus the few route handlers a browser cannot replace: signed exchange calls, CORS-blocked APIs, the native HyperSync client, NFT artwork fetching.
+- `app/` - App Router pages, plus the few route handlers a browser cannot replace: signed exchange calls, CORS-blocked APIs, the native HyperSync client.
 - `lib/chains/`, `lib/events/` - chain metadata and log retrieval, ported and trimmed from `@revoke.cash/core`.
 - `lib/db/` - the Dexie (IndexedDB) schema, the only persistence layer.
 - `lib/sync/` - the pipeline that turns logs into balances.

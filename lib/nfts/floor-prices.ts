@@ -101,7 +101,6 @@ const syncCollectionFloorPrice = async (
       floorPrice: found.floorPriceNative,
       floorPriceCurrency: found.nativeCurrencySymbol,
       floorPriceUsd: found.floorPriceUsd,
-      ...(found.imageUrl && !existing?.imageUrl ? { imageUrl: found.imageUrl } : {}),
       ...(found.name && !existing?.name ? { name: found.name } : {}),
     });
 

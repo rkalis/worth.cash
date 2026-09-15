@@ -56,12 +56,7 @@ export const syncNftBalances = async (chainId: number, owner: Address): Promise<
 
   await db.transaction('rw', db.nftItems, async () => {
     await db.nftItems.bulkDelete(staleIds);
-    // Existing rows are merged rather than replaced, so that artwork and names fetched earlier survive.
-    const merged = rows.map((row) => {
-      const existing = existingItems.find((item) => item.id === row.id);
-      return existing ? { ...row, name: existing.name, imageUrl: existing.imageUrl } : row;
-    });
-    await db.nftItems.bulkPut(merged);
+    await db.nftItems.bulkPut(rows);
   });
 
   const collections = [...new Set(verifiedCandidates.map((candidate) => candidate.collection.toLowerCase()))];
@@ -234,8 +229,7 @@ const syncCollectionMetadata = async (
     });
   }
 
-  // Merge rather than overwrite: floor prices and artwork are written by other steps and must survive a
-  // metadata refresh.
+  // Merge rather than overwrite: floor prices are written by another step and must survive a name refresh.
   const merged = await Promise.all(
     rows.map(async (row) => {
       const existing = await db.nftCollections.get(row.id);

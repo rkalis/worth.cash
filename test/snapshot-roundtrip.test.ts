@@ -107,7 +107,6 @@ const LENS: CurrentLens = {
   categoryAssignments: LIVE_INPUT.categoryAssignments ?? [],
   spamSettings: SPAM,
   liveTokens: LIVE_INPUT.tokens,
-  liveNftCollections: LIVE_INPUT.nftCollections,
 };
 
 // The design's central promise: a recorded snapshot, rendered back through the adapter, is the live
@@ -125,9 +124,7 @@ describe('recording and re-rendering a snapshot', () => {
 
   it('reproduces every aggregated row, locations included', () => {
     expect(replayed.tokens).toEqual(live.tokens);
-    expect(replayed.nftCollections.map((c) => ({ ...c, items: c.items.length ? 'held' : 'none' }))).toEqual(
-      live.nftCollections.map((c) => ({ ...c, items: c.items.length ? 'held' : 'none' })),
-    );
+    expect(replayed.nftCollections).toEqual(live.nftCollections);
   });
 
   it('reproduces the per-chain breakdowns the live tiles show', () => {

@@ -8,11 +8,10 @@ import { ASSET_MAP_SETTING_KEY, type StoredAssetMap } from 'lib/prices/assets';
 // The present-day lens a snapshot is viewed through, read straight from the tables for callers outside
 // React. The hooks read the same tables live; this is for writers that need a total.
 export const loadCurrentLens = async (): Promise<CurrentLens> => {
-  const [overrides, categoryAssignments, liveTokens, liveNftCollections, assetMapRow, settings] = await Promise.all([
+  const [overrides, categoryAssignments, liveTokens, assetMapRow, settings] = await Promise.all([
     db.tokenOverrides.toArray(),
     db.categoryAssignments.toArray(),
     db.tokens.toArray(),
-    db.nftCollections.toArray(),
     db.settings.get(ASSET_MAP_SETTING_KEY),
     loadSettings(),
   ]);
@@ -23,7 +22,6 @@ export const loadCurrentLens = async (): Promise<CurrentLens> => {
     spamSettings: settings.spam,
     coinLogoUrls: (assetMapRow?.value as StoredAssetMap | undefined)?.logos,
     liveTokens,
-    liveNftCollections,
   };
 };
 

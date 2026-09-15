@@ -121,7 +121,6 @@ export interface StoredNftCollection {
   standard: 'erc721' | 'erc1155';
   name?: string;
   symbol?: string;
-  imageUrl?: string;
   // CoinGecko's own collection id, when it has one. Needed for historical floor prices, which are keyed by
   // it rather than by contract address.
   coingeckoNftId?: string;
@@ -147,8 +146,6 @@ export interface StoredNftItem {
   tokenId: string;
   // Always 1 for ERC721. ERC1155 items can be held in quantity.
   amount: string;
-  name?: string;
-  imageUrl?: string;
   updatedAt: number;
 }
 

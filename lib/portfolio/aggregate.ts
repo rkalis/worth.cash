@@ -100,7 +100,6 @@ export interface AggregatedNftCollection {
   chainName: string;
   address: string;
   name: string;
-  imageUrl?: string;
   itemCount: number;
   // Collections are filed by their own key, since a collection has no coin id to be identified by.
   categoryId?: string;
@@ -110,7 +109,6 @@ export interface AggregatedNftCollection {
   isHidden: boolean;
   hiddenReason?: string;
   valueUsd: number | null;
-  items: StoredNftItem[];
 }
 
 export interface PortfolioTotals {
@@ -703,7 +701,6 @@ export const aggregateNftCollections = (input: AggregationInput): AggregatedNftC
       chainName: chain?.getName() ?? `Chain ${items[0].chainId}`,
       address: items[0].collection,
       name: collection?.name ?? collection?.symbol ?? shortenAddress(items[0].collection),
-      imageUrl: collection?.imageUrl,
       itemCount,
       floorPriceUsd,
       valueUsd,
@@ -713,7 +710,6 @@ export const aggregateNftCollections = (input: AggregationInput): AggregatedNftC
         : isBelowDust
           ? `Below $${input.spamSettings.dustThresholdUsd} dust threshold`
           : undefined,
-      items,
     };
   });
 

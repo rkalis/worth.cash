@@ -80,7 +80,6 @@ const buildCollection = (chainId: number, chainName: string, valueUsd: number | 
   itemCount: 1,
   floorPriceUsd: valueUsd,
   valueUsd,
-  items: [],
   isHidden: false,
 });
 

@@ -6,7 +6,6 @@ import TokenTable from 'components/portfolio/TokenTable';
 import Button from 'components/ui/Button';
 import Card from 'components/ui/Card';
 import type { Portfolio } from 'lib/hooks/usePortfolio';
-import Link from 'next/link';
 import { useState } from 'react';
 
 interface Props {
@@ -66,16 +65,11 @@ const PortfolioSections = ({ portfolio }: Props) => {
         <Card
           title={`NFTs (${portfolio.visibleNftCollections.length})`}
           action={
-            <div className="flex items-center gap-3">
-              {portfolio.hiddenNftCollections.length > 0 ? (
-                <Button variant="tertiary" size="sm" onClick={() => setShowHiddenNfts(!showHiddenNfts)}>
-                  {showHiddenNfts ? 'Hide' : 'Show'} {portfolio.hiddenNftCollections.length} filtered
-                </Button>
-              ) : null}
-              <Link href="/nfts" className="text-xs text-zinc-500 hover:text-black dark:hover:text-white">
-                View collections
-              </Link>
-            </div>
+            portfolio.hiddenNftCollections.length > 0 ? (
+              <Button variant="tertiary" size="sm" onClick={() => setShowHiddenNfts(!showHiddenNfts)}>
+                {showHiddenNfts ? 'Hide' : 'Show'} {portfolio.hiddenNftCollections.length} filtered
+              </Button>
+            ) : null
           }
           bodyClassName="p-0"
         >

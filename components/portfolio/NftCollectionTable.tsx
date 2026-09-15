@@ -1,9 +1,9 @@
 'use client';
 
-import NftImage from 'components/nfts/NftImage';
 import CategorySelect from 'components/portfolio/CategorySelect';
 import ChainLogo from 'components/ui/ChainLogo';
 import EmptyState from 'components/ui/EmptyState';
+import InfoTooltip from 'components/ui/InfoTooltip';
 import TablePagination from 'components/ui/TablePagination';
 import { formatShare } from 'lib/format';
 import { useAssetCategories } from 'lib/hooks/useAssetCategories';
@@ -16,8 +16,8 @@ interface Props {
   totalValueUsd: number;
 }
 
-// The portfolio-page view of NFTs: one row per collection, valued at its floor, with the same shape as the
-// token table so the two read as one list. The NFTs page keeps the richer view with artwork per item.
+// NFTs as holdings rather than pictures: one row per collection, how many are held and what they are worth
+// at the floor, with the same shape as the token table so the two read as one list.
 const NftCollectionTable = ({ collections, totalValueUsd }: Props) => {
   const pagination = usePagination(collections);
   const { categories } = useAssetCategories();
@@ -42,7 +42,12 @@ const NftCollectionTable = ({ collections, totalValueUsd }: Props) => {
           <thead>
             <tr className="text-[11px] uppercase tracking-wide text-zinc-400 border-b border-zinc-200 dark:border-zinc-800">
               <th className="text-left font-medium py-2 pl-4 pr-2">Collection</th>
-              <th className="text-right font-medium py-2 px-2 hidden sm:table-cell">Floor</th>
+              <th className="text-right font-medium py-2 px-2 hidden sm:table-cell">
+                <span className="inline-flex items-center justify-end gap-1">
+                  Floor
+                  <InfoTooltip tooltip="Floors come from CoinGecko, which indexes around two thousand collections. A collection outside them has no floor to value it by and is counted at nothing." />
+                </span>
+              </th>
               <th className="text-right font-medium py-2 px-2">Items</th>
               <th className="text-right font-medium py-2 px-2">Value</th>
               <th className="text-right font-medium py-2 px-2">Share</th>
@@ -58,12 +63,7 @@ const NftCollectionTable = ({ collections, totalValueUsd }: Props) => {
               return (
                 <tr key={collection.key} className="border-b border-zinc-100 dark:border-zinc-900">
                   <td className="py-2.5 pl-4 pr-2">
-                    <div className="flex items-center gap-2.5 min-w-0">
-                      <NftImage
-                        src={collection.imageUrl}
-                        alt={collection.name}
-                        className="size-5 rounded-md shrink-0"
-                      />
+                    <div className="flex items-center gap-1.5 min-w-0">
                       <span className="font-medium text-sm truncate">{collection.name}</span>
                       <ChainLogo chainId={collection.chainId} size={14} />
                     </div>

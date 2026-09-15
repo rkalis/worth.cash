@@ -39,7 +39,7 @@ const SLICE_OPTIONS: SliceOption[] = [
     slice: 'synced',
     label: 'Synced data',
     tooltip:
-      'Transfer logs, balances, token and NFT metadata, prices and exchange balances. This is nearly the whole size of a file. Leaving it out costs one resync and no information.',
+      'Transfer logs, balances, token metadata, NFT holdings and floors, prices and exchange balances. This is nearly the whole size of a file. Leaving it out costs one resync and no information.',
     defaultChecked: false,
   },
   {

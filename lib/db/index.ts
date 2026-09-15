@@ -100,6 +100,27 @@ export class PortfolioDatabase extends Dexie {
     this.version(5)
       .stores({})
       .upgrade((transaction) => transaction.table('snapshots').clear());
+
+    // NFT artwork and per-token metadata were removed: NFTs are counted and valued at their floor, nothing
+    // more. The fields are stripped from stored rows so the dead data neither lingers nor travels in
+    // exports. Collection names stay, since they are how one collection is told apart from another.
+    this.version(6)
+      .stores({})
+      .upgrade(async (transaction) => {
+        await transaction
+          .table('nftItems')
+          .toCollection()
+          .modify((item) => {
+            delete item.name;
+            delete item.imageUrl;
+          });
+        await transaction
+          .table('nftCollections')
+          .toCollection()
+          .modify((collection) => {
+            delete collection.imageUrl;
+          });
+      });
   }
 }
 

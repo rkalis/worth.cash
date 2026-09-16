@@ -1,4 +1,4 @@
-import { getChainConfig } from 'lib/chains';
+import { getChainConfigSafe } from 'lib/chains';
 import { createEnabledChainFilter } from 'lib/chains/enabled';
 import { NATIVE_TOKEN_ADDRESS } from 'lib/constants';
 import { db } from 'lib/db';
@@ -359,8 +359,10 @@ const replayOwnerRows = async (
     chainsWithoutArchiveState.push(...native.chainsWithoutArchiveAccess);
 
     for (const nativeSeries of native.series) {
-      const chain = getChainConfig(nativeSeries.chainId as never);
-      const decimals = chain?.getNativeTokenDecimals() ?? 18;
+      const chain = getChainConfigSafe(nativeSeries.chainId);
+      if (!chain?.isSupported()) continue;
+
+      const decimals = chain.getNativeTokenDecimals();
       const nativeAddress = NATIVE_TOKEN_ADDRESS.toLowerCase();
       const id = `${nativeSeries.chainId}:${nativeAddress}`;
 

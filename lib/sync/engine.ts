@@ -1,4 +1,4 @@
-import { getChainConfig } from 'lib/chains';
+import { getChainConfigSafe } from 'lib/chains';
 import { getEnabledChainIds } from 'lib/chains/enabled';
 import { NATIVE_TOKEN_ADDRESS } from 'lib/constants';
 import { db } from 'lib/db';
@@ -40,7 +40,9 @@ export const runSync = async (options: SyncOptions = {}): Promise<void> => {
   const wallets = await db.wallets.where('enabled').equals(1).toArray();
   const owners = options.owners ?? (wallets.map((wallet) => wallet.address) as Address[]);
 
-  const chainIds = options.chainIds ?? getEnabledChainIds(settings.sync.enabledChainIds, settings.sync.includeTestnets);
+  // Caller-supplied chain ids go through the same resolution as the settings, so an id of a chain that is no
+  // longer supported is dropped here rather than failing deep inside the pipeline for want of a config.
+  const chainIds = getEnabledChainIds(options.chainIds ?? settings.sync.enabledChainIds, settings.sync.includeTestnets);
 
   // A portfolio does not have to contain a wallet. Someone tracking only Bitcoin through a manual balance,
   // or only an exchange account, still needs a sync to fetch prices and record a point in their history,
@@ -178,7 +180,7 @@ const syncPricesForHoldings = async (chainIds: number[]): Promise<void> => {
   ) as string[];
 
   const nativeCoingeckoIds = deduplicateArray(
-    chainIds.map((chainId) => getChainConfig(chainId).getNativeTokenCoingeckoId()).filter((id) => Boolean(id)),
+    chainIds.map((chainId) => getChainConfigSafe(chainId)?.getNativeTokenCoingeckoId()).filter((id) => Boolean(id)),
   ) as string[];
 
   await fetchCoinGeckoIdPrices([...listedCoingeckoIds, ...nativeCoingeckoIds]).catch(() => undefined);

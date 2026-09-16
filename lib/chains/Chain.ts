@@ -1,7 +1,7 @@
-import { ChainId, getChain } from '@revoke.cash/chains';
+import { ChainId } from 'lib/chains/ids';
 import { getApiKey, getRuntimeSettings } from 'lib/settings/runtime';
 import type { EtherscanPlatform, RateLimit } from 'lib/types';
-import { isNullish } from 'lib/utils';
+import { deduplicateArray, isNullish } from 'lib/utils';
 import { SECOND } from 'lib/utils/time';
 import {
   type ChainContract,
@@ -17,16 +17,16 @@ import { chainConfig as opStackChainConfig } from 'viem/op-stack';
 export interface ChainOptions {
   type: SupportType;
   chainId: number;
-  name?: string;
-  logoUrl?: string;
-  infoUrl?: string;
-  nativeToken?: string;
+  name: string;
+  logoUrl: string;
+  infoUrl: string;
+  nativeCurrency: NativeCurrency;
   nativeTokenCoingeckoId?: string;
   coingeckoNetworkId?: string;
-  explorerUrl?: string;
+  explorerUrl: string;
   etherscanCompatibleApiUrl?: string;
-  rpc?: {
-    main?: string | string[];
+  rpc: {
+    main: string;
     logs?: string;
     traces?: string;
     free?: string;
@@ -36,6 +36,12 @@ export interface ChainOptions {
   isCanary?: boolean;
   isOpStack?: boolean;
   correspondingMainnetChainId?: number;
+}
+
+export interface NativeCurrency {
+  name: string;
+  symbol: string;
+  decimals: number;
 }
 
 export type DeployedContracts = Record<string, ChainContract>;
@@ -57,18 +63,16 @@ const RPC_PLACEHOLDERS = {
   '{DRPC_API_KEY}': () => getApiKey('drpc'),
 } as const;
 
-// The public RPC lists from chainid.network contain entries that are templates rather than URLs, such as
-// `https://mainnet.infura.io/v3/${INFURA_API_KEY}`. They are meant to be filled in by whoever consumes the
-// list, and using one verbatim produces a request to a literal `${...}` path. revoke.cash never notices,
-// because it always has an Alchemy key configured and so never falls through to the public list.
 // Enough to ride out a few dead hosts without turning one failed call into a long serial retry chain.
 const MAX_FALLBACK_RPC_URLS = 5;
 
-const hasUnresolvedTemplate = (url: string): boolean => url.includes('${') || url.includes('%7B');
+// A URL that still carries a placeholder or template, such as `{DRPC_API_KEY}` with no key configured or a
+// `${...}` copied from documentation, produces a request to a literal `{...}` path. That fails in a way that
+// reads as the chain being unreachable rather than as a missing key, so such a URL is never handed out.
+const hasUnresolvedTemplate = (url: string): boolean => url.includes('{') || url.toUpperCase().includes('%7B');
 
-// The public lists mix transports, offering `wss://` endpoints alongside `https://` ones. We only ever build
-// HTTP clients, and handing a WebSocket URL to an HTTP transport produces a failure that reads as the
-// endpoint being down.
+// We only ever build HTTP clients, and handing a WebSocket URL to an HTTP transport produces a failure that
+// reads as the endpoint being down.
 const isHttpUrl = (url: string): boolean => url.startsWith('https://') || url.startsWith('http://');
 
 const isUsableRpcUrl = (url: string): boolean => isHttpUrl(url) && !hasUnresolvedTemplate(url);
@@ -100,13 +104,11 @@ export class Chain {
   }
 
   getName(): string {
-    const name = this.options.name ?? getChain(this.chainId)?.name ?? `Chain ID ${this.chainId}`;
-
     if (!this.isSupported()) {
-      return `${name} (Unsupported)`;
+      return `${this.options.name} (Unsupported)`;
     }
 
-    return name;
+    return this.options.name;
   }
 
   getSlug(): string {
@@ -131,35 +133,34 @@ export class Chain {
     return this.options.isOpStack ?? false;
   }
 
-  getLogoUrl(): string | undefined {
-    return this.options.logoUrl ?? getChain(this.chainId)?.iconURL;
+  getLogoUrl(): string {
+    return this.options.logoUrl;
   }
 
   getExplorerUrl(): string {
-    const [explorer] = getChain(this.chainId)?.explorers ?? [];
-    return this.options.explorerUrl ?? explorer?.url;
+    return this.options.explorerUrl;
   }
 
   getFreeRpcUrl(): string {
-    const [rpcUrl] = (getChain(this.chainId)?.rpc ?? []).filter(isUsableRpcUrl);
-    return this.options.rpc?.free ?? rpcUrl ?? this.getRpcUrl();
+    return this.options.rpc.free ?? this.getRpcUrl();
   }
 
+  // Every usable endpoint for the chain, most preferred first: the user's own RPC, then the chain's main RPC
+  // (usually a keyed provider), then its keyless public RPC. The public one is what keeps a chain reachable
+  // for someone who has configured no provider key, since the keyed URL is dropped when its key is missing.
   getRpcUrls(): string[] {
     const userOverride = getRuntimeSettings().rpcOverrides[this.chainId];
 
     // Unusable entries are dropped rather than ranked last, since a request to one fails in a way that looks
     // like the chain being down rather than like a bad URL.
-    const baseRpcUrls = (getChain(this.chainId)?.rpc ?? []).filter(isUsableRpcUrl);
-
-    const specifiedRpcUrls = [this.options.rpc?.main]
-      .flat()
-      .filter((url) => !isNullish(url))
+    const rpcUrls = [userOverride, this.options.rpc.main, this.options.rpc.free]
+      .filter((url): url is string => !isNullish(url))
       .map((url) => resolveRpcPlaceholders(url))
       .filter((url): url is string => !isNullish(url) && isUsableRpcUrl(url));
 
-    // A user-configured RPC always wins: it is the only one we know has the rate limits they paid for.
-    return [...(userOverride ? [userOverride] : []), ...specifiedRpcUrls, ...baseRpcUrls];
+    // A user-configured RPC always wins: it is the only one we know has the rate limits they paid for. It is
+    // often the same URL as one of the configured ones, and trying the same host twice in a row is no failover.
+    return deduplicateArray(rpcUrls);
   }
 
   getRpcUrl(): string {
@@ -173,24 +174,23 @@ export class Chain {
   // The chain's dedicated logs endpoint, where it has one, followed by its ordinary endpoints as backups.
   // Returning the whole list rather than just the preferred one is what lets the client fail over.
   getLogsRpcUrls(): string[] {
-    const configuredLogsRpc = this.options.rpc?.logs ? resolveRpcPlaceholders(this.options.rpc.logs) : undefined;
+    const configuredLogsRpc = this.options.rpc.logs ? resolveRpcPlaceholders(this.options.rpc.logs) : undefined;
     const rpcUrls = this.getRpcUrls();
 
     if (!configuredLogsRpc || !isUsableRpcUrl(configuredLogsRpc)) return rpcUrls;
     return [configuredLogsRpc, ...rpcUrls.filter((url) => url !== configuredLogsRpc)];
   }
 
-  getInfoUrl(): string | undefined {
-    const mainnetChainId = this.getCorrespondingMainnetChainId() ?? -1;
-    return this.options.infoUrl ?? getChain(mainnetChainId)?.infoURL ?? getChain(this.chainId)?.infoURL;
+  getInfoUrl(): string {
+    return this.options.infoUrl;
   }
 
   getNativeToken(): string {
-    return (this.options.nativeToken ?? getChain(this.chainId)?.nativeCurrency?.symbol) as string;
+    return this.options.nativeCurrency.symbol;
   }
 
   getNativeTokenDecimals(): number {
-    return getChain(this.chainId)?.nativeCurrency?.decimals ?? 18;
+    return this.options.nativeCurrency.decimals;
   }
 
   getNativeTokenCoingeckoId(): string | undefined {
@@ -270,10 +270,7 @@ export class Chain {
   }
 
   getViemChainConfig(): ViemChain {
-    const chainInfo = getChain(this.chainId);
     const chainName = this.getName();
-    const fallbackNativeCurrency = { name: chainName, symbol: this.getNativeToken(), decimals: 18 };
-
     const stackSpecificChainConfig = this.isOpStack() ? opStackChainConfig : undefined;
 
     return defineChain({
@@ -281,7 +278,7 @@ export class Chain {
       id: this.chainId,
       name: chainName,
       network: this.getSlug(),
-      nativeCurrency: chainInfo?.nativeCurrency ?? fallbackNativeCurrency,
+      nativeCurrency: this.options.nativeCurrency,
       rpcUrls: {
         default: { http: [this.getRpcUrl()] },
         public: { http: [this.getRpcUrl()] },
@@ -305,12 +302,12 @@ export class Chain {
     // Some chains run out of gas with the default multicall settings.
     const multicallOverrides: Record<number, boolean | { batchSize: number }> = {
       [ChainId.Mantle]: { batchSize: 256 },
-      [ChainId.OasysMainnet]: false,
+      [ChainId.Oasys]: false,
     };
 
     const transportOverrides: Record<number, any> = {
       // Kasplex's RPC does not handle batch requests properly
-      202555: { batch: false },
+      [ChainId.KasplexZkEVM]: { batch: false },
     };
 
     const shouldUseDeployless = () => {
@@ -329,9 +326,9 @@ export class Chain {
 
     // Every known endpoint for the chain, not just the first.
     //
-    // Public RPC lists are full of hosts that are dead, rate limited, or refuse browser requests, and taking
-    // only the first entry means one bad host makes the whole chain look unreachable. A fallback transport
-    // moves on to the next, which matters most for exactly the people who have configured no provider key.
+    // Public RPCs are often dead, rate limited, or refuse browser requests, and taking only the first entry
+    // means one bad host makes the whole chain look unreachable. A fallback transport moves on to the next,
+    // which matters most for exactly the people who have configured no provider key.
     const rpcUrls = (overrideUrl ? [overrideUrl].flat() : this.getRpcUrls()).slice(0, MAX_FALLBACK_RPC_URLS);
 
     return createPublicClient({

@@ -1,3 +1,4 @@
+import { isSupportedChain } from 'lib/chains';
 import type {
   StoredCategoryAssignment,
   StoredNftCollection,
@@ -29,10 +30,16 @@ export interface CurrentLens {
 // Turns a stored snapshot back into the aggregation's input, so a pinned point renders through exactly
 // the code path the live dashboard renders through. That identity is the whole design: there is one
 // definition of how a portfolio is aggregated, and history replays it rather than approximating it.
+//
+// Chain support is part of the lens too. A snapshot can hold rows from a chain that has since been dropped
+// from the chain list, and the live portfolio no longer counts such a chain at all. Its balances, tokens and
+// NFTs are left out here as well, so a pinned point, and the total recomputed from it, agree with the
+// dashboard instead of resurrecting money the dashboard cannot show.
 export const buildAggregationInputFromSnapshot = (snapshot: StoredSnapshot, lens: CurrentLens): AggregationInput => {
   const liveTokensById = new Map(lens.liveTokens.map((token) => [token.id, token]));
+  const isOnSupportedChain = (row: { chainId: number }): boolean => isSupportedChain(row.chainId);
 
-  const tokens: StoredToken[] = (snapshot.tokens ?? []).map((token) => ({
+  const tokens: StoredToken[] = (snapshot.tokens ?? []).filter(isOnSupportedChain).map((token) => ({
     id: token.id,
     chainId: token.chainId,
     address: token.address,
@@ -47,20 +54,22 @@ export const buildAggregationInputFromSnapshot = (snapshot: StoredSnapshot, lens
     metadataUpdatedAt: 0,
   }));
 
-  const nftCollections: StoredNftCollection[] = (snapshot.nftCollections ?? []).map((collection) => ({
-    id: collection.id,
-    chainId: collection.chainId,
-    address: collection.address,
-    standard: 'erc721',
-    name: collection.name,
-    floorPriceUsd: collection.floorPriceUsd ?? undefined,
-    floorPriceUpdatedAt: snapshot.timestamp,
-    metadataUpdatedAt: snapshot.timestamp,
-  }));
+  const nftCollections: StoredNftCollection[] = (snapshot.nftCollections ?? [])
+    .filter(isOnSupportedChain)
+    .map((collection) => ({
+      id: collection.id,
+      chainId: collection.chainId,
+      address: collection.address,
+      standard: 'erc721',
+      name: collection.name,
+      floorPriceUsd: collection.floorPriceUsd ?? undefined,
+      floorPriceUpdatedAt: snapshot.timestamp,
+      metadataUpdatedAt: snapshot.timestamp,
+    }));
 
   // The aggregation counts items per (collection, owner) and sums their amounts; one synthetic row per
   // holding carries the same information the itemised live rows do.
-  const nftItems: StoredNftItem[] = (snapshot.nftHoldings ?? []).map((holding) => ({
+  const nftItems: StoredNftItem[] = (snapshot.nftHoldings ?? []).filter(isOnSupportedChain).map((holding) => ({
     id: `${holding.chainId}:${holding.owner}:${holding.collection}:snapshot`,
     chainId: holding.chainId,
     owner: holding.owner,
@@ -86,7 +95,7 @@ export const buildAggregationInputFromSnapshot = (snapshot: StoredSnapshot, lens
   }));
 
   return {
-    balances: (snapshot.balances ?? []).map((balance) => ({
+    balances: (snapshot.balances ?? []).filter(isOnSupportedChain).map((balance) => ({
       id: `${balance.chainId}:${balance.owner}:${balance.token}`,
       chainId: balance.chainId,
       owner: balance.owner,

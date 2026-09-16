@@ -1,4 +1,4 @@
-import { createViemPublicClientForChain, getChainConfig } from 'lib/chains';
+import { createViemPublicClientForChain, getChainConfigSafe } from 'lib/chains';
 import { mapAsyncBounded } from 'lib/utils/promises';
 import { type Address, formatUnits } from 'viem';
 
@@ -40,13 +40,14 @@ export const readHistoricalNativeBalances = async (
   let completedChains = 0;
 
   for (const chainId of chainIds) {
-    const chain = getChainConfig(chainId as never);
+    const chain = getChainConfigSafe(chainId);
     const coingeckoId = chain?.getNativeTokenCoingeckoId();
     const blocks = blocksByChain.get(chainId);
 
+    // A chain id from stored data may belong to a chain that is no longer supported, which has no RPC to ask.
     // Without a CoinGecko id the native token cannot be priced, so reading its history would cost a
     // request per week for a number we could never turn into a value.
-    if (!chain || !coingeckoId || !blocks) continue;
+    if (!chain?.isSupported() || !coingeckoId || !blocks) continue;
 
     const client = createViemPublicClientForChain(chainId);
     const decimals = chain.getNativeTokenDecimals();

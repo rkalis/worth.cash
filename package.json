@@ -16,7 +16,6 @@
   "dependencies": {
     "@envio-dev/hypersync-client": "^1.4.0",
     "@floating-ui/react": "^0.27.20",
-    "@revoke.cash/chains": "^80.0.0",
     "@tanstack/react-query": "^5.101.4",
     "clsx": "^2.1.1",
     "dexie": "^4.4.4",

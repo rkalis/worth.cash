@@ -156,3 +156,55 @@ describe('recording and re-rendering a snapshot', () => {
     expect(JSON.stringify(facts)).not.toContain('logoUrl');
   });
 });
+
+// A snapshot recorded while a chain was still supported keeps that chain's rows forever. Once the chain is
+// dropped the live portfolio stops counting it, so a pinned point must stop counting it too.
+describe('replaying a snapshot that holds a chain which is no longer supported', () => {
+  const REMOVED_CHAIN_ID = 25; // Cronos
+
+  const facts = buildSnapshotFacts(LIVE_INPUT);
+  const snapshot = {
+    timestamp: 1_000,
+    totalUsd: 0,
+    createdAt: 1_000,
+    ...facts,
+    balances: [...facts.balances, { chainId: REMOVED_CHAIN_ID, owner: OWNER_A, token: USDC, amount: '5000000000' }],
+    tokens: [
+      ...facts.tokens,
+      {
+        id: `${REMOVED_CHAIN_ID}:${USDC}`,
+        chainId: REMOVED_CHAIN_ID,
+        address: USDC,
+        symbol: 'USDC',
+        decimals: 6,
+        coingeckoId: 'usd-coin',
+      },
+    ],
+    nftCollections: [
+      ...facts.nftCollections,
+      {
+        id: `${REMOVED_CHAIN_ID}:${APES}`,
+        chainId: REMOVED_CHAIN_ID,
+        address: APES,
+        name: 'Removed Apes',
+        floorPriceUsd: 100,
+      },
+    ],
+    nftHoldings: [...facts.nftHoldings, { chainId: REMOVED_CHAIN_ID, collection: APES, owner: OWNER_A, count: 3 }],
+  };
+
+  const input = buildAggregationInputFromSnapshot(snapshot, LENS);
+
+  it('leaves out every balance, token, collection and holding on that chain', () => {
+    const chainIdsOf = (rows: { chainId: number }[]) => rows.map((row) => row.chainId);
+
+    expect(chainIdsOf(input.balances)).not.toContain(REMOVED_CHAIN_ID);
+    expect(chainIdsOf(input.tokens)).not.toContain(REMOVED_CHAIN_ID);
+    expect(chainIdsOf(input.nftCollections)).not.toContain(REMOVED_CHAIN_ID);
+    expect(chainIdsOf(input.nftItems)).not.toContain(REMOVED_CHAIN_ID);
+  });
+
+  it('values the point exactly as the live portfolio does', () => {
+    expect(assemblePortfolio(input).totals).toEqual(assemblePortfolio(LIVE_INPUT).totals);
+  });
+});

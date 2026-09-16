@@ -8,6 +8,7 @@ import InfoTooltip from 'components/ui/InfoTooltip';
 import Input from 'components/ui/Input';
 import Toggle from 'components/ui/Toggle';
 import { chainIdSorter, getChainConfig, getChainName, SUPPORTED_CHAINS } from 'lib/chains';
+import { getEnabledChainIds } from 'lib/chains/enabled';
 import { useSettings } from 'lib/hooks/useSettings';
 import { cn } from 'lib/utils/classnames';
 import { useMemo, useState } from 'react';
@@ -15,7 +16,7 @@ import { useMemo, useState } from 'react';
 // A pragmatic default for people who do not want to wait out a first sync across every supported chain.
 // Roughly the chains that hold the overwhelming majority of real balances.
 const MAJOR_CHAIN_IDS = [
-  1, 56, 8453, 42161, 10, 43114, 137, 100, 59144, 534352, 324, 81457, 5000, 130, 42220, 1868, 7777777, 34443,
+  1, 56, 8453, 42161, 10, 43114, 137, 100, 59144, 534352, 324, 81457, 5000, 130, 42220, 1868, 34443,
 ];
 
 const ChainsSection = () => {
@@ -49,7 +50,9 @@ const ChainsSection = () => {
     updateSettings({ sync: { ...settings.sync, enabledChainIds: next } });
   };
 
-  const enabledCount = enabledChainIds === null ? allChains.length : enabledChainIds.length;
+  // Counted through the same resolution the sync uses, so a stored selection still holding ids of chains
+  // that are no longer supported (or testnets while they are hidden) does not inflate the figure.
+  const enabledCount = getEnabledChainIds(enabledChainIds, settings.sync.includeTestnets).length;
 
   return (
     <Card

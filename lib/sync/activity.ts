@@ -1,5 +1,5 @@
-import { ChainId } from '@revoke.cash/chains';
 import { createViemPublicClientForChain } from 'lib/chains';
+import { ChainId } from 'lib/chains/ids';
 import { withTimeout } from 'lib/utils/promises';
 import { SECOND } from 'lib/utils/time';
 import type { Address } from 'viem';

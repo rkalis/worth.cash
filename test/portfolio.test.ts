@@ -1035,6 +1035,23 @@ describe('createEnabledChainFilter', () => {
 
     expect(isEnabled(1)).toBe(false);
   });
+
+  // Dropping a chain from the chain list leaves its rows in IndexedDB, and its id may still sit in a saved
+  // selection. Neither the default nor an explicit list may count it, or its old balances would reappear.
+  it('excludes a chain id that is no longer supported under the default selection', () => {
+    const isEnabled = createEnabledChainFilter({ ...DEFAULT_SETTINGS.sync, enabledChainIds: null });
+
+    expect(isEnabled(25)).toBe(false);
+    expect(isEnabled(123456789)).toBe(false);
+  });
+
+  it('excludes a chain id that is no longer supported even when it is listed', () => {
+    const isEnabled = createEnabledChainFilter({ ...DEFAULT_SETTINGS.sync, enabledChainIds: [1, 25, 123456789] });
+
+    expect(isEnabled(1)).toBe(true);
+    expect(isEnabled(25)).toBe(false);
+    expect(isEnabled(123456789)).toBe(false);
+  });
 });
 
 describe('mergeNativeBalanceSeries', () => {

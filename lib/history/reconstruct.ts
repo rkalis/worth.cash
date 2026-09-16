@@ -1,4 +1,4 @@
-import { getChainConfig } from 'lib/chains';
+import { getChainConfigSafe, isSupportedChain } from 'lib/chains';
 import { NATIVE_TOKEN_ADDRESS } from 'lib/constants';
 import { db } from 'lib/db';
 import { coingeckoPriceKey, onChainPriceKey } from 'lib/db/keys';
@@ -130,7 +130,9 @@ export const reconstructSnapshotAt = async (
   const { spam } = await loadSettings();
   const dustThresholdAmount = spam.dustThresholdAmount;
 
-  const events = await db.transferEvents.toArray();
+  // Events from a chain that is no longer supported stay in IndexedDB but are left out here: the dashboard no
+  // longer counts that chain, and its blocks and native balances could not be read without a chain config.
+  const events = (await db.transferEvents.toArray()).filter((event) => isSupportedChain(event.chainId));
 
   // A disabled exchange account is one the user has said is not part of their portfolio, so its history is
   // left out too. Without this the chart and the dashboard would disagree about the same money.
@@ -288,8 +290,10 @@ export const reconstructSnapshotAt = async (
     const amount = nativeSeries.amounts[0];
     if (amount === undefined || amount < dustThresholdAmount) continue;
 
-    const chain = getChainConfig(nativeSeries.chainId as never);
-    const decimals = chain?.getNativeTokenDecimals() ?? 18;
+    const chain = getChainConfigSafe(nativeSeries.chainId);
+    if (!chain?.isSupported()) continue;
+
+    const decimals = chain.getNativeTokenDecimals();
     const nativeAddress = NATIVE_TOKEN_ADDRESS.toLowerCase();
     const id = `${nativeSeries.chainId}:${nativeAddress}`;
 

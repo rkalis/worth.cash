@@ -22,6 +22,9 @@ export const loadCurrentLens = async (): Promise<CurrentLens> => {
     spamSettings: settings.spam,
     coinLogoUrls: (assetMapRow?.value as StoredAssetMap | undefined)?.logos,
     liveTokens,
+    // Collection icons never reach a total, and every caller of this lens wants only a total, so the
+    // collection table is not read just to borrow artwork. The pinned view reads it live for display.
+    liveNftCollections: [],
   };
 };
 

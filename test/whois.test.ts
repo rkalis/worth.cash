@@ -7,7 +7,9 @@ vi.mock('lib/ky', () => ({
   kyQueue: { add: (fn: () => unknown) => fn() },
 }));
 
-const { fetchWhoisTokenMetadata, fetchWhoisTokenMetadataForChain } = await import('lib/whois');
+const { fetchWhoisTokenMetadata, fetchWhoisTokenMetadataForChain, lookupWhoisTokensForChain } = await import(
+  'lib/whois'
+);
 
 // Deliberately lowercase, which is how addresses are stored in IndexedDB.
 const USDC = '0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48';
@@ -87,6 +89,37 @@ describe('fetchWhoisTokenMetadataForChain', () => {
 
   it('does no work for an empty token list', async () => {
     expect((await fetchWhoisTokenMetadataForChain(1, [])).size).toBe(0);
+    expect(kyGet).not.toHaveBeenCalled();
+  });
+});
+
+describe('lookupWhoisTokensForChain', () => {
+  beforeEach(() => kyGet.mockReset());
+
+  // A failed request is not an answer. Callers that record when they last asked use this to retry a failure on
+  // the next sync, instead of treating an outage as a confirmed absence for weeks.
+  it('reports which addresses got an answer, leaving out the ones whose request failed', async () => {
+    const absent = '0x4444444444444444444444444444444444444444';
+    const failing = '0x5555555555555555555555555555555555555555';
+
+    kyGet.mockImplementation((url: string) => ({
+      json: () => {
+        if (url.includes(USDC_CHECKSUMMED)) return Promise.resolve({ symbol: 'USDC', logoURI: 'x.png' });
+        if (url.includes(failing)) return Promise.reject(new Error('network'));
+        return Promise.resolve({});
+      },
+    }));
+
+    const { found, answered } = await lookupWhoisTokensForChain(1, [USDC, absent, failing] as never);
+
+    expect([...found.keys()]).toEqual([USDC]);
+    expect([...answered].sort()).toEqual([USDC, absent].sort());
+  });
+
+  it('does no work for an empty list', async () => {
+    const { found, answered } = await lookupWhoisTokensForChain(1, []);
+
+    expect(found.size + answered.size).toBe(0);
     expect(kyGet).not.toHaveBeenCalled();
   });
 });

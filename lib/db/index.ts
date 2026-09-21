@@ -104,6 +104,8 @@ export class PortfolioDatabase extends Dexie {
     // NFT artwork and per-token metadata were removed: NFTs are counted and valued at their floor, nothing
     // more. The fields are stripped from stored rows so the dead data neither lingers nor travels in
     // exports. Collection names stay, since they are how one collection is told apart from another.
+    // Collection-level icons were later brought back from the whois dataset; clearing the old values here
+    // only means the next sync fills them in again.
     this.version(6)
       .stores({})
       .upgrade(async (transaction) => {

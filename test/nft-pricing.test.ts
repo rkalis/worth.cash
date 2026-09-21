@@ -38,6 +38,7 @@ describe('fetchCoinGeckoNftCollection', () => {
       symbol: 'PPG',
       native_currency_symbol: 'ETH',
       floor_price: { usd: 8875.26, native_currency: 3.74 },
+      image: { small: 'https://example.test/small.png', small_2x: 'https://example.test/small2x.png' },
     });
 
     const lookup = await fetchCoinGeckoNftCollection(1, PUDGY);
@@ -49,7 +50,22 @@ describe('fetchCoinGeckoNftCollection', () => {
       floorPriceUsd: 8875.26,
       floorPriceNative: 3.74,
       nativeCurrencySymbol: 'ETH',
+      imageUrl: 'https://example.test/small2x.png',
     });
+  });
+
+  // CoinGecko sends a bare placeholder filename rather than omitting the field, and storing that produces a
+  // relative URL that resolves against our own origin.
+  it("discards CoinGecko's missing-image placeholder instead of storing it as a URL", async () => {
+    coinGeckoRequest.mockResolvedValue({
+      id: 'abstracted-ape-yacht-club',
+      floor_price: { usd: 1.43 },
+      image: { small: 'missing_small.png', small_2x: 'missing_small_2x.png' },
+    });
+
+    const lookup = await fetchCoinGeckoNftCollection(1, PUDGY);
+
+    expect(lookup.status === 'found' && lookup.collection.imageUrl).toBeUndefined();
   });
 
   // The endpoint is keyed by contract address, lowercased, under the chain's asset platform id.

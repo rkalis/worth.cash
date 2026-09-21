@@ -75,6 +75,7 @@ const LIVE_INPUT: AggregationInput = {
       address: APES,
       standard: 'erc721',
       name: 'Test Apes',
+      whoisImageUrl: 'https://i2c.seadn.io/apes.png',
       floorPriceUsd: 2500,
       metadataUpdatedAt: 0,
     },
@@ -107,6 +108,7 @@ const LENS: CurrentLens = {
   categoryAssignments: LIVE_INPUT.categoryAssignments ?? [],
   spamSettings: SPAM,
   liveTokens: LIVE_INPUT.tokens,
+  liveNftCollections: LIVE_INPUT.nftCollections,
 };
 
 // The design's central promise: a recorded snapshot, rendered back through the adapter, is the live
@@ -152,8 +154,13 @@ describe('recording and re-rendering a snapshot', () => {
     ]);
   });
 
-  it('never freezes logos, which stay a live borrow', () => {
+  it('never freezes logos or collection icons, which stay a live borrow', () => {
     expect(JSON.stringify(facts)).not.toContain('logoUrl');
+    expect(JSON.stringify(facts)).not.toMatch(/imageurl/i);
+  });
+
+  it('shows the live collection icon on a pinned point', () => {
+    expect(replayed.nftCollections[0].imageUrl).toBe('https://i2c.seadn.io/apes.png');
   });
 });
 

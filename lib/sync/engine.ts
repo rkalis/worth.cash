@@ -6,6 +6,7 @@ import { syncCursorKey } from 'lib/db/keys';
 import { loadSettings } from 'lib/db/settings';
 import { recordCurrentSnapshot } from 'lib/history/snapshot';
 import { syncFloorPrices } from 'lib/nfts/floor-prices';
+import { syncCollectionIcons } from 'lib/nfts/icons';
 import { refreshAssetMap, resolveCoinGeckoIdsForSymbols } from 'lib/prices/assets';
 import { primeContractCoinIdMap } from 'lib/prices/coin-ids';
 import { fetchCoinGeckoIdPrices, fetchOnChainPrices } from 'lib/prices/current';
@@ -146,6 +147,7 @@ const syncChainForOwner = async (chainId: number, owner: Address, skipInactiveCh
       const heldItems = await db.nftItems.where('[chainId+owner]').equals([chainId, owner.toLowerCase()]).toArray();
       const heldCollections = deduplicateArray(heldItems.map((item) => item.collection)) as Address[];
 
+      await syncCollectionIcons(chainId, heldCollections);
       await syncFloorPrices(chainId, heldCollections);
     });
   }

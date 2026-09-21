@@ -8,7 +8,7 @@ import { classifyTokenSpam } from 'lib/portfolio/spam';
 import { resolveCoinIdsForTokens } from 'lib/prices/coin-ids';
 import { chunkArray } from 'lib/utils';
 import { WEEK } from 'lib/utils/time';
-import { fetchWhoisTokenMetadataForChain, type WhoisTokenMetadata } from 'lib/whois';
+import { lookupWhoisTokensForChain, type WhoisChainLookup, type WhoisTokenMetadata } from 'lib/whois';
 import { type Address, getAddress, type Hex, hexToString, trim } from 'viem';
 
 const METADATA_BATCH_SIZE = 50;
@@ -51,8 +51,11 @@ export const syncTokenMetadata = async (chainId: number, owner: Address): Promis
   // as its own asset that can never merge with anything else.
   const coinIds = await resolveCoinIdsForTokens(chainId, tokensToFetch as Address[]).catch(() => new Map());
 
-  const whoisEntries = await fetchWhoisTokenMetadataForChain(chainId, tokensToFetch as Address[]).catch(
-    () => new Map<string, WhoisTokenMetadata>(),
+  // Only tokens whose lookup got an answer, found or absent, are recorded as checked. One whose lookup failed
+  // keeps its previous timestamp, so the next sync asks again instead of treating an outage as a month of
+  // confirmed absence.
+  const whoisLookup = await lookupWhoisTokensForChain(chainId, tokensToFetch as Address[]).catch(
+    (): WhoisChainLookup => ({ found: new Map(), answered: new Set() }),
   );
 
   // What is already stored, so a refresh can add to it rather than replace it.
@@ -61,7 +64,7 @@ export const syncTokenMetadata = async (chainId: number, owner: Address): Promis
   );
 
   const rows: StoredToken[] = metadataEntries.map(({ token, symbol, name, decimals, readFailed }) => {
-    const whois = whoisEntries.get(token.toLowerCase());
+    const whois = whoisLookup.found.get(token.toLowerCase());
     const stored = storedByAddress.get(token.toLowerCase());
 
     // Every field falls back to what we already knew.
@@ -97,7 +100,7 @@ export const syncTokenMetadata = async (chainId: number, owner: Address): Promis
       coingeckoId: resolvedCoingeckoId,
       isSpam: spamVerdict.isSpam ? (1 as const) : (0 as const),
       spamReason: spamVerdict.reason,
-      whoisCheckedAt: Date.now(),
+      whoisCheckedAt: whoisLookup.answered.has(token.toLowerCase()) ? Date.now() : stored?.whoisCheckedAt,
       metadataUpdatedAt: readFailed ? (stored?.metadataUpdatedAt ?? 0) : Date.now(),
     };
   });
@@ -138,13 +141,13 @@ const backfillWhoisMetadata = async (chainId: number, tokenAddresses: Address[])
 
   if (needsLookup.length === 0) return;
 
-  const whoisEntries = await fetchWhoisTokenMetadataForChain(
+  const whoisLookup = await lookupWhoisTokensForChain(
     chainId,
     needsLookup.map((token) => token!.address as Address),
-  ).catch(() => new Map<string, WhoisTokenMetadata>());
+  ).catch((): WhoisChainLookup => ({ found: new Map(), answered: new Set() }));
 
   const updates = needsLookup.map((token) => {
-    const whois = whoisEntries.get(token!.address);
+    const whois = whoisLookup.found.get(token!.address);
     const spamVerdict = resolveSpamVerdict(token!, whois);
 
     return {
@@ -154,7 +157,8 @@ const backfillWhoisMetadata = async (chainId: number, tokenAddresses: Address[])
       decimals: token!.decimals ?? whois?.decimals,
       isSpam: spamVerdict.isSpam ? (1 as const) : (0 as const),
       spamReason: spamVerdict.reason,
-      whoisCheckedAt: Date.now(),
+      // As in the main path, a failed lookup keeps the old timestamp so the next sync retries it.
+      whoisCheckedAt: whoisLookup.answered.has(token!.address) ? Date.now() : token!.whoisCheckedAt,
     };
   });
 

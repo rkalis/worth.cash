@@ -93,6 +93,12 @@ const syncCollectionFloorPrice = async (
     update.coingeckoCheckedAt = Date.now();
   }
 
+  // The image arrives with every answer about a collection CoinGecko knows, floor or no floor, so keeping it
+  // costs nothing. It lives in its own field; the aggregation only shows it where whois has no icon.
+  if (lookup.status === 'found') {
+    update.coingeckoImageUrl = lookup.collection.imageUrl;
+  }
+
   if (lookup.status === 'found' && lookup.collection.floorPriceUsd !== undefined) {
     const found = lookup.collection;
 

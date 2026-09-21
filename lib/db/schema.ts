@@ -121,6 +121,11 @@ export interface StoredNftCollection {
   standard: 'erc721' | 'erc1155';
   name?: string;
   symbol?: string;
+  // Collection-level icons, one field per source so neither can mask the other: the revoke.cash whois
+  // dataset's, and the image CoinGecko returns alongside the floor price. The aggregation shows the whois icon
+  // where there is one. Items' own artwork is deliberately never stored.
+  whoisImageUrl?: string;
+  coingeckoImageUrl?: string;
   // CoinGecko's own collection id, when it has one. Needed for historical floor prices, which are keyed by
   // it rather than by contract address.
   coingeckoNftId?: string;
@@ -128,6 +133,10 @@ export interface StoredNftCollection {
   // price timestamp because the two answers go stale at completely different rates: a floor moves hourly,
   // but whether a collection exists in CoinGecko's index at all changes rarely.
   coingeckoCheckedAt?: number;
+  // When the whois dataset was last consulted for this collection's icon. Tracked separately from
+  // `metadataUpdatedAt` for the same reason tokens do: a collection added to the dataset later still picks up
+  // an icon, and one absent from it is not re-requested on every sync.
+  whoisCheckedAt?: number;
   // Floor price in the collection's own denominating currency, plus its USD conversion at fetch time.
   floorPrice?: number;
   floorPriceCurrency?: string;

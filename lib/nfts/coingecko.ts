@@ -1,5 +1,5 @@
 import { HTTPError } from 'ky';
-import { coinGeckoRequest, resolveCoinGeckoPlan } from 'lib/prices/coingecko';
+import { coinGeckoRequest, resolveCoinGeckoPlan, toAbsoluteCoinGeckoImageUrl } from 'lib/prices/coingecko';
 import type { HistoricalPriceSeries } from 'lib/prices/historical';
 import { startOfUtcDay } from 'lib/prices/historical';
 import { resolveAssetPlatformId } from 'lib/prices/platforms';
@@ -10,6 +10,7 @@ interface NftCollectionResponse {
   id?: string;
   name?: string;
   symbol?: string;
+  image?: { small?: string; small_2x?: string };
   native_currency_symbol?: string;
   floor_price?: { usd?: number | null; native_currency?: number | null };
 }
@@ -35,6 +36,9 @@ export interface CoinGeckoNftCollection {
   coingeckoNftId: string;
   name?: string;
   symbol?: string;
+  // Arrives in the same response as the floor, so keeping it costs no extra request. It only fills in a
+  // collection the whois dataset has no icon for.
+  imageUrl?: string;
   floorPriceUsd?: number;
   floorPriceNative?: number;
   nativeCurrencySymbol?: string;
@@ -70,6 +74,8 @@ export const fetchCoinGeckoNftCollection = async (
         coingeckoNftId: response.id,
         name: response.name,
         symbol: response.symbol,
+        imageUrl:
+          toAbsoluteCoinGeckoImageUrl(response.image?.small_2x) ?? toAbsoluteCoinGeckoImageUrl(response.image?.small),
         floorPriceUsd: response.floor_price?.usd ?? undefined,
         floorPriceNative: response.floor_price?.native_currency ?? undefined,
         nativeCurrencySymbol: response.native_currency_symbol,

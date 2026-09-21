@@ -835,6 +835,19 @@ describe('aggregateNftCollections', () => {
     })),
   });
 
+  it("shows the curated whois icon over CoinGecko's, and CoinGecko's where whois has none", () => {
+    const nft = buildNft(1, collection, 5000, 1);
+    const iconFor = (icons: { whoisImageUrl?: string; coingeckoImageUrl?: string }) =>
+      aggregateNftCollections(buildInput({ ...nft, nftCollections: [{ ...nft.nftCollections[0], ...icons }] }))[0]
+        .imageUrl;
+
+    expect(
+      iconFor({ whoisImageUrl: 'https://whois.test/icon.png', coingeckoImageUrl: 'https://coingecko.test/icon.png' }),
+    ).toBe('https://whois.test/icon.png');
+    expect(iconFor({ coingeckoImageUrl: 'https://coingecko.test/icon.png' })).toBe('https://coingecko.test/icon.png');
+    expect(iconFor({})).toBeUndefined();
+  });
+
   it('hides a collection worth less than the dust threshold', () => {
     const [aggregated] = aggregateNftCollections(buildInput(buildNft(1, collection, 0.2, 2)));
 

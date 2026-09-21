@@ -16,15 +16,16 @@ import type { SpamSettings } from 'lib/settings/types';
 // A snapshot freezes the facts: what was held, where, and what it was worth. Everything here is a lens
 // rather than a fact, current on purpose: hiding a token, filing it under a category, or tightening the
 // spam filters should change how every point in history reads, exactly as it changes the present.
-// Token logos are cosmetic and come from the live tables, with the same fallbacks the live view has when
-// they are missing.
+// Token logos and collection icons are cosmetic and come from the live tables, with the same fallbacks the
+// live view has when they are missing.
 export interface CurrentLens {
   overrides: StoredTokenOverride[];
   categoryAssignments: StoredCategoryAssignment[];
   spamSettings: SpamSettings;
   coinLogoUrls?: Record<string, string>;
-  // Live rows, only for their logoUrl. Missing rows cost a placeholder, nothing more.
+  // Live rows, only for their logos and icons. Missing rows cost a placeholder, nothing more.
   liveTokens: StoredToken[];
+  liveNftCollections: StoredNftCollection[];
 }
 
 // Turns a stored snapshot back into the aggregation's input, so a pinned point renders through exactly
@@ -37,6 +38,7 @@ export interface CurrentLens {
 // dashboard instead of resurrecting money the dashboard cannot show.
 export const buildAggregationInputFromSnapshot = (snapshot: StoredSnapshot, lens: CurrentLens): AggregationInput => {
   const liveTokensById = new Map(lens.liveTokens.map((token) => [token.id, token]));
+  const liveCollectionsById = new Map(lens.liveNftCollections.map((collection) => [collection.id, collection]));
   const isOnSupportedChain = (row: { chainId: number }): boolean => isSupportedChain(row.chainId);
 
   const tokens: StoredToken[] = (snapshot.tokens ?? []).filter(isOnSupportedChain).map((token) => ({
@@ -62,6 +64,8 @@ export const buildAggregationInputFromSnapshot = (snapshot: StoredSnapshot, lens
       address: collection.address,
       standard: 'erc721',
       name: collection.name,
+      whoisImageUrl: liveCollectionsById.get(collection.id)?.whoisImageUrl,
+      coingeckoImageUrl: liveCollectionsById.get(collection.id)?.coingeckoImageUrl,
       floorPriceUsd: collection.floorPriceUsd ?? undefined,
       floorPriceUpdatedAt: snapshot.timestamp,
       metadataUpdatedAt: snapshot.timestamp,

@@ -5,6 +5,7 @@ import ChainLogo from 'components/ui/ChainLogo';
 import EmptyState from 'components/ui/EmptyState';
 import InfoTooltip from 'components/ui/InfoTooltip';
 import TablePagination from 'components/ui/TablePagination';
+import TokenLogo from 'components/ui/TokenLogo';
 import { formatShare } from 'lib/format';
 import { useAssetCategories } from 'lib/hooks/useAssetCategories';
 import { useCurrency } from 'lib/hooks/useCurrency';
@@ -16,8 +17,9 @@ interface Props {
   totalValueUsd: number;
 }
 
-// NFTs as holdings rather than pictures: one row per collection, how many are held and what they are worth
-// at the floor, with the same shape as the token table so the two read as one list.
+// NFTs as holdings rather than pictures: one row per collection, identified by the collection's own icon rather
+// than any item's artwork, with how many are held and what they are worth at the floor, in the same shape as
+// the token table so the two read as one list.
 const NftCollectionTable = ({ collections, totalValueUsd }: Props) => {
   const pagination = usePagination(collections);
   const { categories } = useAssetCategories();
@@ -63,7 +65,8 @@ const NftCollectionTable = ({ collections, totalValueUsd }: Props) => {
               return (
                 <tr key={collection.key} className="border-b border-zinc-100 dark:border-zinc-900">
                   <td className="py-2.5 pl-4 pr-2">
-                    <div className="flex items-center gap-1.5 min-w-0">
+                    <div className="flex items-center gap-2 min-w-0">
+                      <TokenLogo src={collection.imageUrl} symbol={collection.name} />
                       <span className="font-medium text-sm truncate">{collection.name}</span>
                       <ChainLogo chainId={collection.chainId} size={14} />
                     </div>

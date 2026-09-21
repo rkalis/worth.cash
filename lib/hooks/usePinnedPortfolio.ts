@@ -12,18 +12,19 @@ import { useMemo } from 'react';
 
 // A pinned snapshot, assembled exactly the way the live portfolio is.
 //
-// The facts come from the snapshot; the lens is live: overrides, categories, spam settings and logos
+// The facts come from the snapshot; the lens is live: overrides, categories, spam settings, logos and icons
 // are read through live queries, so hiding a token or refiling a category updates the pinned view the
 // same way it updates the present.
 export const usePinnedPortfolio = (snapshot: StoredSnapshot | undefined): Portfolio => {
   const overrides = useLiveQuery(() => db.tokenOverrides.toArray(), []);
   const categoryAssignments = useLiveQuery(() => db.categoryAssignments.toArray(), []);
   const liveTokens = useLiveQuery(() => db.tokens.toArray(), []);
+  const liveNftCollections = useLiveQuery(() => db.nftCollections.toArray(), []);
   const assetMapRow = useLiveQuery(() => db.settings.get(ASSET_MAP_SETTING_KEY), []);
   const { settings } = useSettings();
 
   return useMemo(() => {
-    if (!snapshot || !overrides || !categoryAssignments || !liveTokens) {
+    if (!snapshot || !overrides || !categoryAssignments || !liveTokens || !liveNftCollections) {
       return EMPTY_PORTFOLIO;
     }
 
@@ -33,8 +34,9 @@ export const usePinnedPortfolio = (snapshot: StoredSnapshot | undefined): Portfo
       spamSettings: settings.spam,
       coinLogoUrls: (assetMapRow?.value as StoredAssetMap | undefined)?.logos,
       liveTokens,
+      liveNftCollections,
     });
 
     return { ...assemblePortfolio(input), isLoading: false };
-  }, [snapshot, overrides, categoryAssignments, liveTokens, assetMapRow, settings.spam]);
+  }, [snapshot, overrides, categoryAssignments, liveTokens, liveNftCollections, assetMapRow, settings.spam]);
 };

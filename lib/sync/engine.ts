@@ -8,6 +8,7 @@ import { recordCurrentSnapshot } from 'lib/history/snapshot';
 import { syncFloorPrices } from 'lib/nfts/floor-prices';
 import { syncCollectionIcons } from 'lib/nfts/icons';
 import { refreshAssetMap, resolveCoinGeckoIdsForSymbols } from 'lib/prices/assets';
+import { refreshCoinFamilyMap } from 'lib/prices/coin-families';
 import { primeContractCoinIdMap } from 'lib/prices/coin-ids';
 import { fetchCoinGeckoIdPrices, fetchOnChainPrices } from 'lib/prices/current';
 import { hasChainActivity } from 'lib/sync/activity';
@@ -63,6 +64,11 @@ export const runSync = async (options: SyncOptions = {}): Promise<void> => {
       // an exchange, where there is no contract to look up. Refreshed even when no exchange is configured,
       // since the same icons stand in for on-chain tokens the whois dataset has never seen.
       await refreshAssetMap().catch(() => undefined);
+
+      // Which coin ids are bridged copies of the same asset, so that WETH on ten chains is one row. A dozen or
+      // so requests, once a day, and fetched here for the same reason as the coin id map: behind the price
+      // lookups it would wait out the whole rate limit.
+      await refreshCoinFamilyMap().catch(() => undefined);
 
       await mapAsyncBounded(tasks, settings.sync.chainConcurrency, (task) =>
         syncChainForOwner(task.chainId, task.owner, settings.sync.skipInactiveChains),

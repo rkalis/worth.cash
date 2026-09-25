@@ -28,8 +28,9 @@ interface StoredCoinIdMap {
 // deploying a token named USDC costs nothing, that turns a worthless airdrop into a five-figure line item.
 // A coin id cannot be forged: it comes from CoinGecko's own mapping of coin to deployed contract.
 //
-// It also gets the nuances right for free. Native USDC and bridged USDC.e have different coin ids, so they
-// stay separate rather than being silently merged into one balance.
+// It also gets the nuances right for free. Native USDC and bridged USDC.e have different coin ids, so each
+// is priced as itself. Grouping them into one row is a separate, later step (see lib/prices/coin-families)
+// that never changes what either is worth.
 export const resolveCoinIdsForTokens = async (
   chainId: number,
   contractAddresses: Address[],

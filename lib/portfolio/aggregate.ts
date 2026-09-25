@@ -17,7 +17,7 @@ import { fiatPriceUsd, isFiatAssetCode } from 'lib/fiat/rates';
 import { shortenAddress } from 'lib/format';
 import type { ManualHolding } from 'lib/manual/balances';
 import type { SpamSettings } from 'lib/settings/types';
-import { isNullish } from 'lib/utils';
+import { groupBy, isNullish } from 'lib/utils';
 import { formatUnits } from 'viem';
 
 export interface TokenContractHolding {
@@ -72,10 +72,12 @@ export interface AggregatedToken {
   // individually can price them without re-deriving the identity.
   coingeckoId?: string;
   // Every other key this position could be recorded under: one per contract it is deployed as, one per
-  // ticker it trades under. Honoured when reading, and written alongside the primary key so that losing an
-  // identity cannot lose the decision.
+  // ticker it trades under, and one per bridged copy merged into it. Honoured when reading, and written
+  // alongside the primary key so that losing an identity cannot lose the decision.
   supersededOverrideKeys: string[];
   totalAmount: number;
+  // The price of the coin the row is named after. A row that merges bridged copies values each copy at its
+  // own price, so its value can differ slightly from the amount times this.
   priceUsd: number | null;
   valueUsd: number | null;
   locations: TokenLocation[];
@@ -135,6 +137,8 @@ export interface AggregationInput {
   // Logos keyed by CoinGecko coin id, from the market data the exchange pricing already fetches. It is the
   // only icon source for an asset with no contract to look up, which is every exchange-held coin.
   coinLogoUrls?: Record<string, string>;
+  // Bridged copies of a coin, mapped to the coin they are a copy of.
+  canonicalCoinIds?: Record<string, string>;
   // Units of each currency per US dollar, used to value cash held on an exchange.
   fiatRatesPerUsd?: Record<string, number>;
   // Which category the user filed each asset under, keyed by the same identity a hide decision uses.
@@ -152,6 +156,11 @@ export interface AggregationInput {
 //
 // That same id is what an exchange balance resolves to, which is why an exchange is just another location:
 // the ETH on Kraken and the ETH on Base are the same asset by the same test the chains already had to pass.
+//
+// Bridged copies are the one refinement. CoinGecko lists WETH on Base and WETH on Ethereum as two coins, so
+// a copy is grouped under the coin it is a copy of (see lib/prices/coin-families). Only the grouping moves:
+// every coin in a row is still priced as itself, so a copy from a drained bridge could at worst sit in the
+// wrong row, and never be valued at the original's price.
 export const aggregateTokens = (input: AggregationInput): AggregatedToken[] => {
   const pricesById = new Map(input.prices.map((price) => [price.id, price.priceUsd]));
   const overridesById = new Map(input.overrides.map((override) => [override.id, override.hidden]));
@@ -191,7 +200,10 @@ interface Position {
   // Where the price came from. A coin-id price is the market price for the asset and is shared by every
   // holding of it; a pool price is a quote for one specific contract on one specific chain.
   priceSource?: 'coin' | 'pool';
+  // The coin the position is priced as.
   coingeckoId?: string;
+  // The coin the position is grouped under: its own, or for a bridged copy, the coin it is a copy of.
+  canonicalCoinId?: string;
   isSpam: boolean;
   spamReason?: string;
   logoUrl?: string;
@@ -240,16 +252,18 @@ const buildChainPositions = (input: AggregationInput, pricesById: Map<string, nu
 
     const chain = getChainConfig(holding.chainId as never);
     const coingeckoId = resolveCoingeckoId(holding, token);
+    const canonicalCoinId = resolveCanonicalCoinId(coingeckoId, input);
     const price = resolvePrice(holding, coingeckoId, pricesById);
 
     return [
       {
-        identity: coingeckoId ? `coin:${coingeckoId}` : `contract:${holding.chainId}:${holding.token}`,
+        identity: canonicalCoinId ? `coin:${canonicalCoinId}` : `contract:${holding.chainId}:${holding.token}`,
         symbol: token?.symbol ?? 'Unknown',
         amount,
         priceUsd: price.priceUsd,
         priceSource: price.source,
         coingeckoId,
+        canonicalCoinId,
         isSpam: token?.isSpam === 1,
         spamReason: token?.spamReason,
         logoUrl: token?.logoUrl,
@@ -278,6 +292,7 @@ const buildExchangePositions = (input: AggregationInput, pricesById: Map<string,
     // coin, which is what keeps a EUR balance apart from a euro stablecoin.
     const isCash = isFiatAssetCode(asset);
     const coingeckoId = isCash ? undefined : input.exchangeAssetCoingeckoIds[balance.asset];
+    const canonicalCoinId = resolveCanonicalCoinId(coingeckoId, input);
 
     const priceUsd = isCash
       ? fiatPriceUsd(asset, input.fiatRatesPerUsd)
@@ -289,12 +304,13 @@ const buildExchangePositions = (input: AggregationInput, pricesById: Map<string,
       {
         // An asset the symbol map could not resolve has no identity beyond its ticker, so it stays on its
         // own row. Merging on the ticker alone is the exact mistake the coin id exists to prevent.
-        identity: coingeckoId ? `coin:${coingeckoId}` : isCash ? `fiat:${asset}` : `exchange:${asset}`,
+        identity: canonicalCoinId ? `coin:${canonicalCoinId}` : isCash ? `fiat:${asset}` : `exchange:${asset}`,
         symbol: asset,
         amount,
         priceUsd,
         priceSource: 'coin',
         coingeckoId,
+        canonicalCoinId,
         isSpam: false,
         logoUrl: coingeckoId ? input.coinLogoUrls?.[coingeckoId] : undefined,
         exchange: {
@@ -319,15 +335,17 @@ const buildManualPositions = (input: AggregationInput, pricesById: Map<string, n
     if (!isRealAmount(amount, input.spamSettings)) return [];
 
     const coingeckoId = balance.coingeckoId;
+    const canonicalCoinId = resolveCanonicalCoinId(coingeckoId, input);
 
     return [
       {
-        identity: coingeckoId ? `coin:${coingeckoId}` : `manual:${balance.id}`,
+        identity: canonicalCoinId ? `coin:${canonicalCoinId}` : `manual:${balance.id}`,
         symbol: balance.symbol.toUpperCase(),
         amount,
         priceUsd: coingeckoId ? (pricesById.get(coingeckoPriceKey(coingeckoId)) ?? null) : null,
         priceSource: 'coin',
         coingeckoId,
+        canonicalCoinId,
         isSpam: false,
         logoUrl: coingeckoId ? input.coinLogoUrls?.[coingeckoId] : undefined,
         manual: { balanceId: balance.id, location: balance.location, wallet: balance.wallet },
@@ -341,14 +359,14 @@ const buildAggregatedToken = (
   overridesById: Map<string, 0 | 1>,
   categoriesByKey: Map<string, string>,
 ): AggregatedToken => {
-  // Every member of a group is the same asset by construction, so they share one price. Crucially this is
-  // only ever a price the group's own identity resolved to: nothing inherits a price from a sibling, which
-  // is what previously let an unpriced impostor be valued at the real token's price.
-  const priceUsd = resolveClusterPrice(cluster);
-  const totalAmount = cluster.reduce((total, position) => total + position.amount, 0);
-  const valueUsd = isNullish(priceUsd) ? null : totalAmount * priceUsd;
+  const coingeckoId = cluster.find((position) => position.canonicalCoinId)?.canonicalCoinId;
 
-  const locations = buildLocations(cluster, priceUsd);
+  const coins = splitIntoCoins(cluster);
+  const priceUsd = resolveRowPrice(coins, coingeckoId);
+  const totalAmount = cluster.reduce((total, position) => total + position.amount, 0);
+  const valueUsd = coins.reduce<number | null>((total, coin) => addValues(total, coin.valueUsd), null);
+
+  const locations = buildLocations(coins);
 
   const chainValueUsd = sumLocationValues(locations, 'chain');
   const exchangeValueUsd = sumLocationValues(locations, 'exchange');
@@ -357,15 +375,15 @@ const buildAggregatedToken = (
   // One holding describes the row: its symbol and its icon.
   const primary = pickPrimaryPosition(cluster);
   const spam = resolveClusterSpam(cluster);
-  const coingeckoId = cluster.find((position) => position.coingeckoId)?.coingeckoId;
 
   const overrideKey = resolveOverrideKey(coingeckoId, primary);
-  const supersededOverrideKeys = collectSupersededOverrideKeys(cluster, overrideKey);
+  const supersededKeysByCoin = coins.map((coin) => collectSupersededOverrideKeys(coin.positions, overrideKey));
+  const supersededOverrideKeys = [...new Set(supersededKeysByCoin.flat())];
 
   const hidden = resolveHiddenState({
     overridesById,
     overrideKey,
-    supersededOverrideKeys,
+    supersededKeysByCoin,
     isSpam: spam.isSpam,
     spamReason: spam.spamReason,
     priceUsd,
@@ -393,22 +411,81 @@ const buildAggregatedToken = (
   };
 };
 
-// Collapses the cluster into one entry per place: per chain, and per exchange account.
+// One coin within a row, and the price every holding of it shares.
+interface PricedCoin {
+  coingeckoId?: string;
+  positions: Position[];
+  priceUsd: number | null;
+  valueUsd: number | null;
+}
+
+// Splits a row into the coins it is made of. Only a row that merges bridged copies has more than one.
+//
+// Every holding of one coin is the same asset by construction, so they share one price. Crucially this is
+// only ever a price the coin's own identity resolved to: nothing inherits a price from a sibling, which is
+// what previously let an unpriced impostor be valued at the real token's price. A bridged copy is a sibling
+// too, which is why pricing happens per coin rather than per row.
+const splitIntoCoins = (cluster: Position[]): PricedCoin[] =>
+  [...groupBy(cluster, (position) => position.coingeckoId ?? position.identity).values()].map((positions) => {
+    const amount = positions.reduce((total, position) => total + position.amount, 0);
+    const priceUsd = resolveCoinPrice(positions);
+
+    return {
+      coingeckoId: positions[0].coingeckoId,
+      positions,
+      priceUsd,
+      valueUsd: isNullish(priceUsd) ? null : amount * priceUsd,
+    };
+  });
+
+// The price shown for the row: the original coin's, since that is the asset the row is named after, or the
+// most valuable copy's when only bridged copies are held. A copy is only merged while it trades within a
+// couple of percent of the original, so the choice barely moves the number.
+const resolveRowPrice = (coins: PricedCoin[], canonicalCoinId: string | undefined): number | null => {
+  const ranked = [...coins].sort((a, b) => {
+    const byOriginal = Number(b.coingeckoId === canonicalCoinId) - Number(a.coingeckoId === canonicalCoinId);
+    if (byOriginal !== 0) return byOriginal;
+
+    return (b.valueUsd ?? 0) - (a.valueUsd ?? 0);
+  });
+
+  return ranked.find((coin) => !isNullish(coin.priceUsd))?.priceUsd ?? null;
+};
+
+// Adds up values where null means unpriced. Unpriced plus priced is the priced value rather than unknown,
+// which is how an unpriced holding already counts towards the total: as nothing.
+const addValues = (total: number | null, value: number | null): number | null => {
+  if (isNullish(total)) return value;
+  if (isNullish(value)) return total;
+  return total + value;
+};
+
+// Collapses the row into one entry per place: per chain, and per exchange account.
 //
 // Grouped by chain rather than by contract, because the same coin can be deployed more than once on a chain
 // and two rows with the same chain name and nothing to tell them apart reads as a bug.
-const buildLocations = (cluster: Position[], priceUsd: number | null): TokenLocation[] => {
+const buildLocations = (coins: PricedCoin[]): TokenLocation[] => {
   const chainLocations = new Map<number, TokenChainLocation>();
   const exchangeLocations = new Map<string, TokenExchangeLocation>();
   const manualLocations = new Map<string, TokenManualLocation>();
 
-  for (const position of cluster) {
+  // Each holding is valued at its own coin's price, so a location holding both an original and a bridged
+  // copy of it is worth exactly what its two holdings are worth.
+  const valuedPositions = coins.flatMap((coin) =>
+    coin.positions.map((position) => ({
+      position,
+      valueUsd: isNullish(coin.priceUsd) ? null : position.amount * coin.priceUsd,
+    })),
+  );
+
+  for (const { position, valueUsd } of valuedPositions) {
     if (position.chain) {
       const { chainId, chainName, token } = position.chain;
       const existing = chainLocations.get(chainId);
 
       if (existing) {
         existing.amount += position.amount;
+        existing.valueUsd = addValues(existing.valueUsd, valueUsd);
         existing.contracts.push({ token, amount: position.amount });
       } else {
         chainLocations.set(chainId, {
@@ -417,7 +494,7 @@ const buildLocations = (cluster: Position[], priceUsd: number | null): TokenLoca
           chainId,
           name: chainName,
           amount: position.amount,
-          valueUsd: null,
+          valueUsd,
           contracts: [{ token, amount: position.amount }],
         });
       }
@@ -436,13 +513,14 @@ const buildLocations = (cluster: Position[], priceUsd: number | null): TokenLoca
 
       if (existing) {
         existing.amount += position.amount;
+        existing.valueUsd = addValues(existing.valueUsd, valueUsd);
       } else {
         manualLocations.set(groupKey, {
           kind: 'manual',
           key: `manual:${groupKey}`,
           name: location,
           amount: position.amount,
-          valueUsd: null,
+          valueUsd,
         });
       }
       continue;
@@ -457,6 +535,7 @@ const buildLocations = (cluster: Position[], priceUsd: number | null): TokenLoca
     // variants are once their suffix is stripped.
     if (existing) {
       existing.amount += position.amount;
+      existing.valueUsd = addValues(existing.valueUsd, valueUsd);
     } else {
       exchangeLocations.set(accountId, {
         kind: 'exchange',
@@ -466,7 +545,7 @@ const buildLocations = (cluster: Position[], priceUsd: number | null): TokenLoca
         asset,
         name: accountLabel,
         amount: position.amount,
-        valueUsd: null,
+        valueUsd,
       });
     }
   }
@@ -478,10 +557,7 @@ const buildLocations = (cluster: Position[], priceUsd: number | null): TokenLoca
     })),
     ...exchangeLocations.values(),
     ...manualLocations.values(),
-  ].map((location) => ({
-    ...location,
-    valueUsd: isNullish(priceUsd) ? null : location.amount * priceUsd,
-  }));
+  ];
 
   return locations.sort((a, b) => {
     const byValue = (b.valueUsd ?? 0) - (a.valueUsd ?? 0);
@@ -500,17 +576,17 @@ const sumLocationValues = (locations: TokenLocation[], kind: TokenLocation['kind
     .filter((location) => location.kind === kind)
     .reduce((total, location) => total + (location.valueUsd ?? 0), 0);
 
-// The price for the whole row.
+// The price for every holding of one coin.
 //
 // A coin-id price is the market price for the asset, so every holding of it shares that one number. Only
 // when there is none does this fall back to an on-chain pool quote, and then it takes the largest holding's
 // rather than whichever position happened to be built first: the row's value must not depend on the order
 // balances came out of IndexedDB.
-const resolveClusterPrice = (cluster: Position[]): number | null => {
-  const coinPrice = cluster.find((position) => position.priceSource === 'coin')?.priceUsd;
+const resolveCoinPrice = (positions: Position[]): number | null => {
+  const coinPrice = positions.find((position) => position.priceSource === 'coin')?.priceUsd;
   if (!isNullish(coinPrice)) return coinPrice;
 
-  const largestPriced = [...cluster]
+  const largestPriced = [...positions]
     .sort((a, b) => b.amount - a.amount)
     .find((position) => !isNullish(position.priceUsd));
 
@@ -544,8 +620,14 @@ const resolveClusterSpam = (cluster: Position[]): { isSpam: boolean; spamReason?
 // knows only a ticker. Among on-chain holdings, one with a logo wins: having whois metadata at all is also
 // what makes its symbol and its spam verdict the trustworthy ones. Value breaks the remaining ties, so the
 // answer never depends on iteration order.
+//
+// Ahead of all of that, in a row that merges bridged copies, the original names the row: USDC rather than
+// USDC.e or USDbC, even when the copy is the bigger holding.
 const pickPrimaryPosition = (cluster: Position[]): Position => {
   const ranked = [...cluster].sort((a, b) => {
+    const byOriginal = Number(isOriginalCoin(b)) - Number(isOriginalCoin(a));
+    if (byOriginal !== 0) return byOriginal;
+
     if (Boolean(a.chain) !== Boolean(b.chain)) return a.chain ? -1 : 1;
     // A manual holding was named by the user, so it describes the row better than an exchange ticker.
     if (Boolean(a.manual) !== Boolean(b.manual)) return a.manual ? -1 : 1;
@@ -558,6 +640,8 @@ const pickPrimaryPosition = (cluster: Position[]): Position => {
 
   return ranked[0];
 };
+
+const isOriginalCoin = (position: Position): boolean => position.coingeckoId === position.canonicalCoinId;
 
 // The id a show/hide decision is stored under.
 //
@@ -588,11 +672,16 @@ const resolveOverrideKey = (coingeckoId: string | undefined, primary: Position):
 
 // Every key this position could have been hidden under before it had a stable identity: one per contract it
 // is deployed as, and one per ticker it trades under.
-const collectSupersededOverrideKeys = (cluster: Position[], overrideKey: string): string[] => {
-  const keys = cluster.map((position) => {
-    if (position.chain) return tokenOverrideKey(position.chain.chainId, position.chain.token);
-    if (position.manual) return `manual:${position.manual.balanceId}`;
-    return exchangeAssetOverrideKey(position.exchange?.asset ?? position.symbol);
+//
+// A bridged copy also used to be a row of its own before it was merged with the original, and a decision
+// recorded against that row sits under the copy's own coin id. It comes first, being the newer of the two.
+const collectSupersededOverrideKeys = (positions: Position[], overrideKey: string): string[] => {
+  const keys = positions.flatMap((position) => {
+    const coinKeys = position.coingeckoId ? [`coin:${position.coingeckoId}`] : [];
+
+    if (position.chain) return [...coinKeys, tokenOverrideKey(position.chain.chainId, position.chain.token)];
+    if (position.manual) return [...coinKeys, `manual:${position.manual.balanceId}`];
+    return [...coinKeys, exchangeAssetOverrideKey(position.exchange?.asset ?? position.symbol)];
   });
 
   return [...new Set(keys)].filter((key) => key !== overrideKey);
@@ -606,6 +695,10 @@ const resolveCoingeckoId = (
   (holding.token === NATIVE_TOKEN_ADDRESS.toLowerCase()
     ? getChainConfig(holding.chainId as never)?.getNativeTokenCoingeckoId()
     : undefined);
+
+// A bridged copy is grouped under the coin it is a copy of; every other coin is grouped under itself.
+const resolveCanonicalCoinId = (coingeckoId: string | undefined, input: AggregationInput): string | undefined =>
+  coingeckoId ? (input.canonicalCoinIds?.[coingeckoId] ?? coingeckoId) : undefined;
 
 const resolvePrice = (
   holding: { chainId: number; token: string },
@@ -629,7 +722,8 @@ const resolvePrice = (
 interface HiddenStateInput {
   overridesById: Map<string, 0 | 1>;
   overrideKey: string;
-  supersededOverrideKeys: string[];
+  // The keys each coin in the row could have been recorded under before, one list per coin.
+  supersededKeysByCoin: string[][];
   isSpam: boolean;
   spamReason?: string;
   priceUsd: number | null;
@@ -640,12 +734,7 @@ interface HiddenStateInput {
 // Decides whether a position is hidden, in the order the user would expect: an explicit choice always wins,
 // then automatic spam detection, then the price and dust rules.
 const resolveHiddenState = (input: HiddenStateInput): { isHidden: boolean; hiddenReason?: string } => {
-  // The identity key is asked first, then the keys this position could have been recorded under before it
-  // had one. A write puts the same value in all of them, so they only ever disagree when one was left
-  // behind by an older version, and in that case the identity key is the more recent answer.
-  const override = [input.overrideKey, ...input.supersededOverrideKeys]
-    .map((key) => input.overridesById.get(key))
-    .find((value) => value !== undefined);
+  const override = resolveOverride(input);
 
   if (override === 1) return { isHidden: true, hiddenReason: 'Hidden by you' };
   if (override === 0) return { isHidden: false };
@@ -663,6 +752,28 @@ const resolveHiddenState = (input: HiddenStateInput): { isHidden: boolean; hidde
   }
 
   return { isHidden: false };
+};
+
+// The user's own show or hide decision for the row, if there is one.
+//
+// The identity key is asked first, then the keys this position could have been recorded under before it
+// had one. A write puts the same value in all of them, so they only ever disagree when one was left
+// behind by an older version, and in that case the identity key is the more recent answer.
+//
+// A row that merges bridged copies is the exception, because it used to be one row per copy, each with a
+// decision of its own. Hiding a dust balance of bridged USDC on one chain was a decision about that row and
+// not about USDC, so a decision carried over from before the merge only counts when every coin in the row
+// carries the same one. Otherwise one old hide would take all of the user's USDC out of the total.
+const resolveOverride = (input: HiddenStateInput): 0 | 1 | undefined => {
+  const identityOverride = input.overridesById.get(input.overrideKey);
+  if (identityOverride !== undefined) return identityOverride;
+
+  const carriedOverrides = input.supersededKeysByCoin.map((keys) =>
+    keys.map((key) => input.overridesById.get(key)).find((value) => value !== undefined),
+  );
+
+  const [firstOverride] = carriedOverrides;
+  return carriedOverrides.every((value) => value === firstOverride) ? firstOverride : undefined;
 };
 
 // Groups NFTs by collection. Collections are chain-specific contracts, so the same project deployed on two

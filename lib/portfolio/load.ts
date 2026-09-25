@@ -19,6 +19,7 @@ import { FIAT_RATES_SETTING_KEY, type StoredFiatRates } from 'lib/fiat/rates';
 import { buildManualHoldings } from 'lib/manual/balances';
 import type { AggregationInput } from 'lib/portfolio/aggregate';
 import { ASSET_MAP_SETTING_KEY, type StoredAssetMap } from 'lib/prices/assets';
+import { COIN_FAMILY_MAP_SETTING_KEY, type StoredCoinFamilyMap } from 'lib/prices/coin-families';
 import { type AppSettings, mergeSettingsWithDefaults } from 'lib/settings/types';
 
 // Everything the portfolio is derived from, straight out of IndexedDB and unfiltered.
@@ -39,6 +40,7 @@ export interface PortfolioSource {
   wallets?: StoredWallet[];
   settingsRow?: StoredSetting;
   assetMapRow?: StoredSetting;
+  coinFamilyMapRow?: StoredSetting;
   fiatRatesRow?: StoredSetting;
 }
 
@@ -66,6 +68,7 @@ export const loadPortfolioSource = async (): Promise<PortfolioSource> => {
     wallets,
     settingsRow,
     assetMapRow,
+    coinFamilyMapRow,
     fiatRatesRow,
   ] = await Promise.all([
     db.balances.toArray(),
@@ -82,6 +85,7 @@ export const loadPortfolioSource = async (): Promise<PortfolioSource> => {
     db.wallets.toArray(),
     db.settings.get(PORTFOLIO_SETTINGS_KEY),
     db.settings.get(ASSET_MAP_SETTING_KEY),
+    db.settings.get(COIN_FAMILY_MAP_SETTING_KEY),
     db.settings.get(FIAT_RATES_SETTING_KEY),
   ]);
 
@@ -100,6 +104,7 @@ export const loadPortfolioSource = async (): Promise<PortfolioSource> => {
     wallets,
     settingsRow,
     assetMapRow,
+    coinFamilyMapRow,
     fiatRatesRow,
   };
 };
@@ -151,6 +156,7 @@ export const buildAggregationInput = (source: PortfolioSource): AggregationInput
     manualHoldings,
     categoryAssignments: source.categoryAssignments,
     coinLogoUrls: assetMap?.logos,
+    canonicalCoinIds: (source.coinFamilyMapRow?.value as StoredCoinFamilyMap | undefined)?.canonicalCoinIds,
     fiatRatesPerUsd: (source.fiatRatesRow?.value as StoredFiatRates | undefined)?.rates,
     spamSettings,
   };

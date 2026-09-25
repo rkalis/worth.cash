@@ -8,6 +8,7 @@ import { useSettings } from 'lib/hooks/useSettings';
 import { assemblePortfolio } from 'lib/portfolio/assemble';
 import { buildAggregationInputFromSnapshot } from 'lib/portfolio/snapshot-input';
 import { ASSET_MAP_SETTING_KEY, type StoredAssetMap } from 'lib/prices/assets';
+import { COIN_FAMILY_MAP_SETTING_KEY, type StoredCoinFamilyMap } from 'lib/prices/coin-families';
 import { useMemo } from 'react';
 
 // A pinned snapshot, assembled exactly the way the live portfolio is.
@@ -21,6 +22,7 @@ export const usePinnedPortfolio = (snapshot: StoredSnapshot | undefined): Portfo
   const liveTokens = useLiveQuery(() => db.tokens.toArray(), []);
   const liveNftCollections = useLiveQuery(() => db.nftCollections.toArray(), []);
   const assetMapRow = useLiveQuery(() => db.settings.get(ASSET_MAP_SETTING_KEY), []);
+  const coinFamilyMapRow = useLiveQuery(() => db.settings.get(COIN_FAMILY_MAP_SETTING_KEY), []);
   const { settings } = useSettings();
 
   return useMemo(() => {
@@ -33,10 +35,20 @@ export const usePinnedPortfolio = (snapshot: StoredSnapshot | undefined): Portfo
       categoryAssignments,
       spamSettings: settings.spam,
       coinLogoUrls: (assetMapRow?.value as StoredAssetMap | undefined)?.logos,
+      canonicalCoinIds: (coinFamilyMapRow?.value as StoredCoinFamilyMap | undefined)?.canonicalCoinIds,
       liveTokens,
       liveNftCollections,
     });
 
     return { ...assemblePortfolio(input), isLoading: false };
-  }, [snapshot, overrides, categoryAssignments, liveTokens, liveNftCollections, assetMapRow, settings.spam]);
+  }, [
+    snapshot,
+    overrides,
+    categoryAssignments,
+    liveTokens,
+    liveNftCollections,
+    assetMapRow,
+    coinFamilyMapRow,
+    settings.spam,
+  ]);
 };

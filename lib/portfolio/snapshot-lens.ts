@@ -4,15 +4,17 @@ import { loadSettings } from 'lib/db/settings';
 import { assemblePortfolio } from 'lib/portfolio/assemble';
 import { buildAggregationInputFromSnapshot, type CurrentLens } from 'lib/portfolio/snapshot-input';
 import { ASSET_MAP_SETTING_KEY, type StoredAssetMap } from 'lib/prices/assets';
+import { COIN_FAMILY_MAP_SETTING_KEY, type StoredCoinFamilyMap } from 'lib/prices/coin-families';
 
 // The present-day lens a snapshot is viewed through, read straight from the tables for callers outside
 // React. The hooks read the same tables live; this is for writers that need a total.
 export const loadCurrentLens = async (): Promise<CurrentLens> => {
-  const [overrides, categoryAssignments, liveTokens, assetMapRow, settings] = await Promise.all([
+  const [overrides, categoryAssignments, liveTokens, assetMapRow, coinFamilyMapRow, settings] = await Promise.all([
     db.tokenOverrides.toArray(),
     db.categoryAssignments.toArray(),
     db.tokens.toArray(),
     db.settings.get(ASSET_MAP_SETTING_KEY),
+    db.settings.get(COIN_FAMILY_MAP_SETTING_KEY),
     loadSettings(),
   ]);
 
@@ -21,6 +23,7 @@ export const loadCurrentLens = async (): Promise<CurrentLens> => {
     categoryAssignments,
     spamSettings: settings.spam,
     coinLogoUrls: (assetMapRow?.value as StoredAssetMap | undefined)?.logos,
+    canonicalCoinIds: (coinFamilyMapRow?.value as StoredCoinFamilyMap | undefined)?.canonicalCoinIds,
     liveTokens,
     // Collection icons never reach a total, and every caller of this lens wants only a total, so the
     // collection table is not read just to borrow artwork. The pinned view reads it live for display.

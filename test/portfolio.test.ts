@@ -160,9 +160,9 @@ describe('aggregateTokens', () => {
     expect(calculateTotals(result, []).tokensUsd).toBe(1);
   });
 
-  // Bridged and native versions of an asset are genuinely different coins to CoinGecko, and keeping them
-  // apart is what stops a depegged bridged balance being valued at the native price.
-  it('keeps bridged and native versions of an asset separate', () => {
+  // Bridged and native versions of an asset are genuinely different coins to CoinGecko. Only the coin family
+  // map can say one is a copy of the other; without it, sharing a symbol is no reason to merge them.
+  it('keeps bridged and native versions of an asset separate when nothing says one is a copy', () => {
     const bridgedUsdc = '0x2791bca1f2de4661ed88a30c99a7a9449aa84174';
 
     const result = aggregateTokens(
@@ -296,6 +296,198 @@ describe('aggregateTokens', () => {
 
     expect(hidden.isHidden).toBe(true);
     expect(hidden.supersededOverrideKeys).toContain(`8453:${usdcBase}`);
+  });
+});
+
+describe('aggregateTokens with bridged copies', () => {
+  const wethEthereum = '0xc02aaa39b223fe8d0a0e5c4f27ead9083c756cc2';
+  const wethBase = '0x4200000000000000000000000000000000000006';
+  const usdcArbitrum = '0xaf88d065e77c8cc2239327c5edb3a432268e5831';
+  const bridgedUsdcArbitrum = '0xff970a61a04b1ca14834a43f5de4533ebddb5cc8';
+
+  const canonicalCoinIds = {
+    'l2-standard-bridged-weth-base': 'weth',
+    'usd-coin-ethereum-bridged': 'usd-coin',
+  };
+
+  const wethTokens = [
+    buildToken(1, wethEthereum, { symbol: 'WETH', decimals: 18, coingeckoId: 'weth' }),
+    buildToken(8453, wethBase, { symbol: 'WETH', decimals: 18, coingeckoId: 'l2-standard-bridged-weth-base' }),
+  ];
+  const wethBalances = [
+    buildBalance(1, wethEthereum, '1000000000000000000'),
+    buildBalance(8453, wethBase, '2000000000000000000'),
+  ];
+  const wethPrices = [
+    { id: 'coingecko:weth', priceUsd: 2000, updatedAt: Date.now() },
+    { id: 'coingecko:l2-standard-bridged-weth-base', priceUsd: 1990, updatedAt: Date.now() },
+  ];
+
+  const usdcTokens = [
+    buildToken(42161, usdcArbitrum, { coingeckoId: 'usd-coin' }),
+    buildToken(42161, bridgedUsdcArbitrum, { symbol: 'USDC.e', coingeckoId: 'usd-coin-ethereum-bridged' }),
+  ];
+  const usdcPrices = [
+    { id: 'coingecko:usd-coin', priceUsd: 1, updatedAt: Date.now() },
+    { id: 'coingecko:usd-coin-ethereum-bridged', priceUsd: 1, updatedAt: Date.now() },
+  ];
+
+  it('merges a bridged copy into the row of the coin it is a copy of', () => {
+    const result = aggregateTokens(
+      buildInput({ balances: wethBalances, tokens: wethTokens, prices: wethPrices, canonicalCoinIds }),
+    );
+
+    expect(result).toHaveLength(1);
+    expect(result[0].overrideKey).toBe('coin:weth');
+    expect(result[0].coingeckoId).toBe('weth');
+    expect(result[0].totalAmount).toBe(3);
+    expect(result[0].locations.map((location) => location.name)).toEqual(['Base', 'Ethereum']);
+  });
+
+  // Merging moves a copy into another row, never onto another price: a copy from a bridge that has since been
+  // drained must still be worth only what the market pays for it.
+  it('values each coin in the row at its own price', () => {
+    const [position] = aggregateTokens(
+      buildInput({ balances: wethBalances, tokens: wethTokens, prices: wethPrices, canonicalCoinIds }),
+    );
+
+    expect(position.valueUsd).toBe(2000 + 2 * 1990);
+    expect(position.locations.find((location) => location.name === 'Base')?.valueUsd).toBe(2 * 1990);
+    // The price shown is the original's, since that is the asset the row is named after.
+    expect(position.priceUsd).toBe(2000);
+  });
+
+  it('never lets an unpriced copy inherit the original price', () => {
+    const [position] = aggregateTokens(
+      buildInput({ balances: wethBalances, tokens: wethTokens, prices: [wethPrices[0]], canonicalCoinIds }),
+    );
+
+    expect(position.valueUsd).toBe(2000);
+    expect(position.locations.find((location) => location.name === 'Base')?.valueUsd).toBeNull();
+  });
+
+  it('names the row after the original even when the copy is the larger holding', () => {
+    const [position] = aggregateTokens(
+      buildInput({
+        balances: [buildBalance(42161, usdcArbitrum, '1000000'), buildBalance(42161, bridgedUsdcArbitrum, '9000000')],
+        tokens: usdcTokens,
+        prices: usdcPrices,
+        canonicalCoinIds,
+      }),
+    );
+
+    expect(position.symbol).toBe('USDC');
+    expect(position.locations).toHaveLength(1);
+    expect(position.locations[0].kind === 'chain' && position.locations[0].contracts).toHaveLength(2);
+  });
+
+  it('lets the copy name the row when the original is not held at all', () => {
+    const [position] = aggregateTokens(
+      buildInput({
+        balances: [buildBalance(42161, bridgedUsdcArbitrum, '9000000')],
+        tokens: usdcTokens,
+        prices: usdcPrices,
+        canonicalCoinIds,
+      }),
+    );
+
+    expect(position.symbol).toBe('USDC.e');
+    expect(position.overrideKey).toBe('coin:usd-coin');
+  });
+
+  it("carries the copy's own coin key, so a decision made before the merge can still be found", () => {
+    const [position] = aggregateTokens(
+      buildInput({ balances: wethBalances, tokens: wethTokens, prices: wethPrices, canonicalCoinIds }),
+    );
+
+    expect(position.supersededOverrideKeys).toContain('coin:l2-standard-bridged-weth-base');
+    expect(position.supersededOverrideKeys).toContain(`8453:${wethBase}`);
+  });
+
+  it('keeps the category a copy was filed under before the merge', () => {
+    const [position] = aggregateTokens(
+      buildInput({
+        balances: wethBalances,
+        tokens: wethTokens,
+        prices: wethPrices,
+        canonicalCoinIds,
+        categoryAssignments: [{ id: 'coin:l2-standard-bridged-weth-base', categoryId: 'blue-chip', updatedAt: 0 }],
+      }),
+    );
+
+    expect(position.categoryId).toBe('blue-chip');
+  });
+
+  // Hiding a dust balance of a copy was a decision about that one copy. Carried over to the merged row it
+  // would take the original out of the total along with it.
+  it('does not let a hide on one copy hide the whole row', () => {
+    const [position] = aggregateTokens(
+      buildInput({
+        balances: wethBalances,
+        tokens: wethTokens,
+        prices: wethPrices,
+        canonicalCoinIds,
+        overrides: [
+          { id: 'coin:l2-standard-bridged-weth-base', hidden: 1, updatedAt: 0 },
+          { id: `8453:${wethBase}`, hidden: 1, updatedAt: 0 },
+        ],
+      }),
+    );
+
+    expect(position.isHidden).toBe(false);
+  });
+
+  it('still hides the row when every coin in it was hidden before the merge', () => {
+    const [position] = aggregateTokens(
+      buildInput({
+        balances: wethBalances,
+        tokens: wethTokens,
+        prices: wethPrices,
+        canonicalCoinIds,
+        overrides: [
+          { id: `1:${wethEthereum}`, hidden: 1, updatedAt: 0 },
+          { id: 'coin:l2-standard-bridged-weth-base', hidden: 1, updatedAt: 0 },
+        ],
+      }),
+    );
+
+    expect(position.isHidden).toBe(true);
+  });
+
+  it('lets a decision on the merged row itself override whatever the copies carried', () => {
+    const [position] = aggregateTokens(
+      buildInput({
+        balances: wethBalances,
+        tokens: wethTokens,
+        prices: wethPrices,
+        canonicalCoinIds,
+        overrides: [
+          { id: 'coin:weth', hidden: 1, updatedAt: 0 },
+          { id: 'coin:l2-standard-bridged-weth-base', hidden: 0, updatedAt: 0 },
+        ],
+      }),
+    );
+
+    expect(position.isHidden).toBe(true);
+  });
+
+  it('merges an exchange holding of the original with an on-chain copy', () => {
+    const [position] = aggregateTokens(
+      buildInput({
+        balances: [buildBalance(42161, bridgedUsdcArbitrum, '5000000')],
+        tokens: usdcTokens,
+        prices: usdcPrices,
+        exchangeBalances: [buildExchangeBalance(KRAKEN_ACCOUNT.id, 'USDC', '10')],
+        exchangeAccounts: [KRAKEN_ACCOUNT],
+        exchangeAssetCoingeckoIds: { USDC: 'usd-coin' },
+        canonicalCoinIds,
+      }),
+    );
+
+    expect(position.symbol).toBe('USDC');
+    expect(position.valueUsd).toBe(15);
+    expect(position.chainValueUsd).toBe(5);
+    expect(position.exchangeValueUsd).toBe(10);
   });
 });
 

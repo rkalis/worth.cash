@@ -23,6 +23,10 @@ export interface CurrentLens {
   categoryAssignments: StoredCategoryAssignment[];
   spamSettings: SpamSettings;
   coinLogoUrls?: Record<string, string>;
+  // Which coins are bridged copies of which. Grouping is how a portfolio reads rather than what it held, and
+  // each copy is still valued at the price the snapshot froze for it, so a past point merges its WETHs
+  // exactly as today does without any figure in it changing.
+  canonicalCoinIds?: Record<string, string>;
   // Live rows, only for their logos and icons. Missing rows cost a placeholder, nothing more.
   liveTokens: StoredToken[];
   liveNftCollections: StoredNftCollection[];
@@ -128,6 +132,7 @@ export const buildAggregationInputFromSnapshot = (snapshot: StoredSnapshot, lens
     exchangeAssetCoingeckoIds: snapshot.exchangeAssetCoingeckoIds ?? {},
     manualHoldings,
     coinLogoUrls: lens.coinLogoUrls,
+    canonicalCoinIds: lens.canonicalCoinIds,
     fiatRatesPerUsd: snapshot.fiatRatesPerUsd,
     categoryAssignments: lens.categoryAssignments,
     spamSettings: lens.spamSettings,

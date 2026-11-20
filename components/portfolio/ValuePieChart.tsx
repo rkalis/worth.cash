@@ -82,7 +82,12 @@ const ValuePieChart = ({ entries, totalUsd, height = 260, emptyMessage = 'Nothin
             </Pie>
 
             <Tooltip
-              contentStyle={{ fontSize: 12, borderRadius: 8, border: '1px solid var(--color-zinc-300)' }}
+              contentStyle={{
+                fontSize: 12,
+                borderRadius: 8,
+                backgroundColor: 'var(--chart-tooltip-background)',
+                border: '1px solid var(--chart-tooltip-border)',
+              }}
               formatter={(value, name) => [formatValue(Number(value)), String(name)]}
             />
           </PieChart>

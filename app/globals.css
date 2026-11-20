@@ -71,6 +71,18 @@
   font-variant-numeric: tabular-nums;
 }
 
+/* recharts styles its tooltip inline, white background included, so a dark: class cannot reach it. The
+   charts' inline styles point at these instead, which is what lets the tooltip follow the theme. */
+:root {
+  --chart-tooltip-background: var(--color-white);
+  --chart-tooltip-border: var(--color-zinc-300);
+}
+
+.dark {
+  --chart-tooltip-background: var(--color-zinc-900);
+  --chart-tooltip-border: var(--color-zinc-700);
+}
+
 /* recharts renders internal <g tabindex="-1"> layers that pick up focus from a click and draw the
    browser's focus ring around the plot. Nothing inside a chart is keyboard-reachable (the accessibility
    layer is off; keyboard users pin from the History table), so the ring can only ever be that artifact. */

@@ -98,7 +98,12 @@ const ValueChart = ({ points, height = 240, onPointClick, pinnedTimestamp }: Pro
           />
 
           <Tooltip
-            contentStyle={{ fontSize: 12, borderRadius: 8, border: '1px solid var(--color-zinc-300)' }}
+            contentStyle={{
+              fontSize: 12,
+              borderRadius: 8,
+              backgroundColor: 'var(--chart-tooltip-background)',
+              border: '1px solid var(--chart-tooltip-border)',
+            }}
             labelFormatter={(timestamp) => formatDateShort(Number(timestamp))}
             formatter={(value) => [formatValue(Number(value)), 'Total value']}
           />
